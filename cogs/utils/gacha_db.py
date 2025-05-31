@@ -26,17 +26,17 @@ def get_character_pools(server: str) -> dict:
         name = char["name_en"] if server == "global" else char["name_jp"]
         char_info = {"id": char["id"], "name": name}
 
-        if char["star_grade"] == 1:
+        if char["star_grade"] == 1 and char["is_limited"] == 0:  # R級角色且非限定
             pools["R"].append(char_info)
-        elif char["star_grade"] == 2:
+        elif char["star_grade"] == 2 and char["is_limited"] == 0:  # SR級角色且非限定
             pools["SR"].append(char_info)
         elif char["star_grade"] == 3:
-            if char["is_limited"] == 1:
-                # 這裡假設 Fes 池的角色也在 is_limited 中，後續會從 banner 資訊中區分
-                 pools["Limited"].append(char_info)
-            else:
+            if char["is_limited"] == 0:
                 pools["SSR"].append(char_info)
-
+            elif char["is_limited"] == 1: # 限定角色
+                pools["Limited"].append(char_info)
+            elif char["is_limited"] == 3: # Fes角色
+                pools["Fes"].append(char_info)
     con.close()
     return pools
 

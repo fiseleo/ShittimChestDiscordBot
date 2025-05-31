@@ -5,12 +5,12 @@ import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
-# --- 全域設定 ---
+
 pwd = Path(__file__).parent.parent
 DB_PATH = pwd / "../gacha_data/gacha_data.db"
 IMAGE_DIR = pwd / "../gacha_data/images"
 
-# --- 資料庫初始化 ---
+
 def initialize_database():
     """確保資料庫檔案和所有需要的資料表都已建立。"""
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -26,7 +26,7 @@ def initialize_database():
     con.commit()
     con.close()
 
-# --- 並行下載輔助函式 ---
+
 def fetch_url(url, is_json=True):
     try:
         response = requests.get(url, timeout=15)
@@ -47,7 +47,7 @@ def download_and_save_image(student_id, save_path):
         return True
     return False
 
-# --- 學生資料處理輔助函式 ---
+
 def process_student_data(region_data, region_key_for_students_dict, students_dict):
     """
     處理來自特定區域的學生資料並整合到 students_dict 中。
@@ -56,27 +56,24 @@ def process_student_data(region_data, region_key_for_students_dict, students_dic
     students_dict: 要更新的主要學生資料字典。
     """
     student_iterable = []
-    if isinstance(region_data, dict): # 如果 API 回傳的是字典
+    if isinstance(region_data, dict): 
         student_iterable = region_data.values()
-        # print(f"處理 {region_key_for_students_dict}：資料是字典，遍歷其 values。")
-    elif isinstance(region_data, list): # 如果 API 回傳的是列表
+
+    elif isinstance(region_data, list): 
         student_iterable = region_data
-        # print(f"處理 {region_key_for_students_dict}：資料是列表，直接遍歷。")
     else:
         print(f"警告：{region_key_for_students_dict} 學生資料格式無法識別 ({type(region_data)})，跳過處理。")
         return
 
     for char in student_iterable:
-        if not isinstance(char, dict): # 確保迭代的每個元素都是字典
-            # print(f"警告：在 {region_key_for_students_dict} 學生資料中發現非字典項目: {type(char)}，跳過。")
+        if not isinstance(char, dict): 
             continue 
         
         char_id = char.get("Id")
         if not char_id: 
-            # print(f"警告：在 {region_key_for_students_dict} 學生資料中發現無 ID 項目，跳過: {char}")
             continue
 
-        if region_key_for_students_dict == "char_jp": # 主資料來源 (日服)
+        if region_key_for_students_dict == "char_jp": 
             students_dict[char_id] = {
                 "id": char_id, 
                 "name_jp": char.get("Name"), 
@@ -84,16 +81,15 @@ def process_student_data(region_data, region_key_for_students_dict, students_dic
                 "name_en": None,
                 "star_grade": char.get("StarGrade"), 
                 "is_limited": char.get("IsLimited"),
-                # 確保 IsReleased 存在且是至少有2個元素的列表
                 "in_global": 1 if isinstance(char.get("IsReleased"), list) and len(char.get("IsReleased")) > 1 and char.get("IsReleased")[1] else 0
             }
-        elif char_id in students_dict: # 更新其他語言的名稱
+        elif char_id in students_dict: 
             if region_key_for_students_dict == "char_tw":
                 students_dict[char_id]["name_tw"] = char.get("Name")
             elif region_key_for_students_dict == "char_en":
                 students_dict[char_id]["name_en"] = char.get("Name")
 
-# --- 主要更新函式 ---
+
 def update():
     print("<<<<< 開始更新轉蛋資料 >>>>>")
     initialize_database()
@@ -102,13 +98,13 @@ def update():
         "char_jp": "https://schaledb.com/data/jp/students.min.json",
         "char_tw": "https://schaledb.com/data/tw/students.min.json",
         "char_en": "https://schaledb.com/data/en/students.min.json",
-        "banner_jp": "https://api.ennead.cc/buruaka/banner?region=japan",
-        "banner_gl": "https://api.ennead.cc/buruaka/banner?region=global"
+        "banner_jp": "https://raw.githubusercontent.com/electricgoat/ba-data/refs/heads/jp/DB/ShopRecruitExcelTable.json",
+        "banner_gl": "https://raw.githubusercontent.com/electricgoat/ba-data/refs/heads/global/Excel/ShopRecruitExcelTable.json"
     }
     
     api_data = {}
     api_data_fetch_success = True
-    essential_keys = ["char_jp", "banner_jp", "banner_gl"] # 定義必要的 API 資料
+    essential_keys = ["char_jp", "banner_jp", "banner_gl"] 
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         future_to_url = {executor.submit(fetch_url, url): key for key, url in api_urls.items()}

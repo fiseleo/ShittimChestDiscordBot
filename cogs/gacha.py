@@ -6,14 +6,11 @@ import random
 import math
 import PIL.Image
 import PIL.ImageChops
-# 匯入我們新的資料庫查詢工具
 from .utils import gacha_db
 
-# 將路徑設定移到 Cog 內部或作為全域常數
 ASSETS_DIR = Path(__file__).parent.parent / "assets"
 IMAGE_DIR = Path(__file__).parent.parent / "gacha_data" / "images"
 
-# 預先載入不會變動的圖片資源
 try:
     MASK = PIL.Image.open(ASSETS_DIR / "mask.png")
     BORDER = PIL.Image.open(ASSETS_DIR / "border.png")
@@ -27,12 +24,11 @@ except FileNotFoundError as e:
     raise FileNotFoundError(f"缺少核心素材圖片，請檢查 assets 資料夾: {e}")
 
 
-# --- Gacha Cog 主體 ---
+
 
 class Gacha(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # 在 Cog 初始化時，從資料庫載入所有資料到記憶體中
         self.load_data_from_db()
 
     def load_data_from_db(self):
@@ -44,8 +40,6 @@ class Gacha(commands.Cog):
         self.pools_jp = gacha_db.get_character_pools("japan")
         self.banners_jp = gacha_db.get_current_banners("japan")
         
-        # 將 Fes 限定池從一般限定池中分離出來 (如果需要)
-        # 這裡簡化處理，假設所有限定都在一個池裡，由抽卡邏輯決定
         print("轉蛋資料載入完成。")
 
     def pull_logic(self, server: str, choice: int, last_pull: bool):
@@ -53,7 +47,7 @@ class Gacha(commands.Cog):
         pools = self.pools_gl if server == "global" else self.pools_jp
         banners = self.banners_gl if server == "global" else self.banners_jp
         
-        # 複製卡池以避免修改原始快取資料
+
         pool_r = pools["R"].copy()
         pool_sr = pools["SR"].copy()
         pool_ssr = pools["SSR"].copy()
@@ -61,7 +55,7 @@ class Gacha(commands.Cog):
 
         pickup_sr, pickup_ssr = [], []
         
-        # R, SR, SSR, Pickup_SR, Pickup_SSR
+
         weights = [78.5, 18.5, 3.0, 0, 0]
         gacha_type = "PermanentGacha"
 
@@ -69,7 +63,7 @@ class Gacha(commands.Cog):
             banner = banners[choice]
             gacha_type = banner["gachaType"]
             
-            # 從卡池中移除 UP 角，放入 UP 池
+
             for rateup in banner["rateups"]:
                 rateup_id = rateup["id"]
                 if rateup["rarity"] == "SR":
@@ -80,7 +74,7 @@ class Gacha(commands.Cog):
                     pool_limited = [char for char in pool_limited if char["id"] != rateup_id]
                     pickup_ssr.append(rateup)
 
-            # 根據卡池類型調整權重
+
             if gacha_type == "PickupGacha":
                 if pickup_sr:
                     weights[1] -= 3.0
@@ -93,14 +87,14 @@ class Gacha(commands.Cog):
                     weights[2] -= 0.7 * len(pickup_ssr)
                     weights[4] += 0.7 * len(pickup_ssr)
             elif gacha_type == "FesGacha":
-                weights = [75.5, 18.5, 5.3, 0, 0.7] # 總計 6% SSR，0.7% UP
+                weights = [75.5, 18.5, 5.3, 0, 0.7] 
         
-        # 十連保底 SR
+
         if last_pull:
             weights[1] += weights[0]
             weights[0] = 0
 
-        # 抽卡
+
         try:
             rarity_result = random.choices(["R", "SR", "SSR", "Pickup_SR", "Pickup_SSR"], weights)[0]
             
@@ -120,21 +114,21 @@ class Gacha(commands.Cog):
             elif rarity_result == "Pickup_SSR" and pickup_ssr:
                 result = random.choice(pickup_ssr)
                 result["rarity"] = "Pickup_SSR"
-            else: # 如果目標池為空，則從 R 池遞補
+            else: 
                 result = random.choice(pool_r)
                 result["rarity"] = "R"
 
             result["server"] = server
             return result
-        except IndexError: # 當所有卡池都為空時的極端情況
-            return {"id": 0, "name": "神秘的卷軸", "rarity": "R", "server": server}
+        except IndexError: 
+            return {"id": 0, "name": "Null", "rarity": "R", "server": server}
     
     def create_single_image(self, result: dict):
         """根據抽卡結果生成單張角色頭像圖。"""
         base_char_image = PIL.Image.new("RGBA", (160, 160), (0, 0, 0, 0))
         
         try:
-            # 圖片路徑現在統一使用 ID
+
             char_img_path = IMAGE_DIR / f"{result['id']}.png"
             with PIL.Image.open(char_img_path) as char:
                 char = char.convert("RGBA")
@@ -191,7 +185,6 @@ class Gacha(commands.Cog):
         await interaction.response.send_message("請選擇您要進行招募的卡池：", view=view, ephemeral=True)
 
 
-# --- UI 元件 ---
 
 class GachaDropdown(discord.ui.Select):
     def __init__(self, cog: Gacha, mode: str):
