@@ -4,25 +4,40 @@ from pathlib import Path
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
+import datetime
+import pytz
 
 
 pwd = Path(__file__).parent.parent
 DB_PATH = pwd / "../gacha_data/gacha_data.db"
 IMAGE_DIR = pwd / "../gacha_data/images"
+UTC_PLUS_9 = pytz.timezone('Etc/GMT-9')
 
 
 def initialize_database():
-    """確保資料庫檔案和所有需要的資料表都已建立。"""
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
+    
     cur.execute("""
     CREATE TABLE IF NOT EXISTS students_list (
         id INTEGER PRIMARY KEY, name_jp TEXT, name_tw TEXT, name_en TEXT,
         star_grade INTEGER, is_limited INTEGER, in_global INTEGER
     )""")
-    cur.execute("CREATE TABLE IF NOT EXISTS current_banner_jp (type TEXT, rateup_1 INTEGER, rateup_2 INTEGER)")
-    cur.execute("CREATE TABLE IF NOT EXISTS current_banner_gl (type TEXT, rateup_1 INTEGER, rateup_2 INTEGER)")
+    cur.execute("DROP TABLE IF EXISTS current_banner_jp")
+    cur.execute("""
+    CREATE TABLE current_banner_jp (
+        type TEXT,
+        rateup_id INTEGER 
+    )""")
+    
+    cur.execute("DROP TABLE IF EXISTS current_banner_gl") 
+    cur.execute("""
+    CREATE TABLE current_banner_gl (
+        type TEXT,
+        rateup_id INTEGER
+    )""")
     con.commit()
     con.close()
 
@@ -49,57 +64,43 @@ def download_and_save_image(student_id, save_path):
 
 
 def process_student_data(region_data, region_key_for_students_dict, students_dict):
-    """
-    處理來自特定區域的學生資料並整合到 students_dict 中。
-    region_data: 從 API 獲取的原始學生資料。
-    region_key_for_students_dict: 'char_jp', 'char_tw', 或 'char_en'，用於決定如何更新 students_dict。
-    students_dict: 要更新的主要學生資料字典。
-    """
     student_iterable = []
-    if isinstance(region_data, dict): 
+    if isinstance(region_data, dict):
         student_iterable = region_data.values()
-
-    elif isinstance(region_data, list): 
+    elif isinstance(region_data, list):
         student_iterable = region_data
     else:
         print(f"警告：{region_key_for_students_dict} 學生資料格式無法識別 ({type(region_data)})，跳過處理。")
         return
 
     for char in student_iterable:
-        if not isinstance(char, dict): 
-            continue 
-        
+        if not isinstance(char, dict): continue
         char_id = char.get("Id")
-        if not char_id: 
-            continue
+        if not char_id: continue
 
-        if region_key_for_students_dict == "char_jp": 
+        if region_key_for_students_dict == "char_jp":
             students_dict[char_id] = {
-                "id": char_id, 
-                "name_jp": char.get("Name"), 
-                "name_tw": None, 
-                "name_en": None,
-                "star_grade": char.get("StarGrade"), 
-                "is_limited": char.get("IsLimited"),
+                "id": char_id, "name_jp": char.get("Name"), "name_tw": None, "name_en": None,
+                "star_grade": char.get("StarGrade"), "is_limited": char.get("IsLimited"),
                 "in_global": 1 if isinstance(char.get("IsReleased"), list) and len(char.get("IsReleased")) > 1 and char.get("IsReleased")[1] else 0
             }
-        elif char_id in students_dict: 
+        elif char_id in students_dict:
             if region_key_for_students_dict == "char_tw":
                 students_dict[char_id]["name_tw"] = char.get("Name")
             elif region_key_for_students_dict == "char_en":
                 students_dict[char_id]["name_en"] = char.get("Name")
 
-
+# --- 主要更新函式 ---
 def update():
     print("<<<<< 開始更新轉蛋資料 >>>>>")
-    initialize_database()
+    initialize_database() # 每次更新都確保資料表結構是最新的
 
     api_urls = {
         "char_jp": "https://schaledb.com/data/jp/students.min.json",
         "char_tw": "https://schaledb.com/data/tw/students.min.json",
         "char_en": "https://schaledb.com/data/en/students.min.json",
-        "banner_jp": "https://raw.githubusercontent.com/electricgoat/ba-data/refs/heads/jp/DB/ShopRecruitExcelTable.json",
-        "banner_gl": "https://raw.githubusercontent.com/electricgoat/ba-data/refs/heads/global/Excel/ShopRecruitExcelTable.json"
+        "banner_jp": "https://raw.githubusercontent.com/electricgoat/ba-data/refs/heads/jp/DB/ShopRecruitExcelTable.json", 
+        "banner_gl": "https://raw.githubusercontent.com/electricgoat/ba-data/refs/heads/global/Excel/ShopRecruitExcelTable.json" 
     }
     
     api_data = {}
@@ -111,7 +112,7 @@ def update():
         for future in tqdm(as_completed(future_to_url), total=len(api_urls), desc="獲取 API 資料"):
             key = future_to_url[future]
             data = future.result()
-            api_data[key] = data # 儲存獲取到的資料，即使是 None
+            api_data[key] = data
             if data is None and key in essential_keys:
                 print(f"無法獲取必要的 API 資料: {key}。")
                 api_data_fetch_success = False
@@ -146,28 +147,61 @@ def update():
     else:
         print("所有學生頭像均已存在，無需下載。")
 
-    name_jp_to_id = {s["name_jp"]: s["id"] for s in students.values() if s["name_jp"]}
-    name_en_to_id = {s["name_en"]: s["id"] for s in students.values() if s["name_en"]}
-    
-    cur.execute("DELETE FROM current_banner_jp")
-    jp_banners_to_insert = []
-    for banner in api_data.get("banner_jp", {}).get("current", []): # 使用 .get 避免 banner_jp 為 None 時出錯
-        rateups = banner.get("rateups", [])
-        if rateups:
-            rateup_ids = [name_jp_to_id.get(name) for name in rateups if name_jp_to_id.get(name)]
-            if rateup_ids:
-                 jp_banners_to_insert.append((banner.get("gachaType"), rateup_ids[0], rateup_ids[1] if len(rateup_ids) > 1 else None))
-    if jp_banners_to_insert: cur.executemany("INSERT INTO current_banner_jp VALUES (?, ?, ?)", jp_banners_to_insert)
+    now_utc9 = datetime.datetime.now(UTC_PLUS_9)
+    VALID_BANNER_TYPES = ["PickupGacha", "NormalGacha", "LimitedGacha", "FesGacha"]
+    def process_banner_data(raw_banner_json_data, banner_table_name):
+        if not isinstance(raw_banner_json_data, dict):
+            print(f"警告：{banner_table_name} 的卡池資料格式非預期的字典，跳過處理。實際類型: {type(raw_banner_json_data)}")
+            return
+        
+        banner_list = raw_banner_json_data.get("DataList")
+        if not isinstance(banner_list, list):
+            print(f"警告：{banner_table_name} 的卡池資料中 'DataList' 格式非預期的列表，跳過處理。實際類型: {type(banner_list)}")
+            return
+            
+        active_banners_to_insert = []
+        for banner_item in banner_list:
+            if not isinstance(banner_item, dict): continue
+            
+            is_legacy = banner_item.get("IsLegacy", True)
+            if is_legacy:
+                continue
 
-    cur.execute("DELETE FROM current_banner_gl")
-    gl_banners_to_insert = []
-    for banner in api_data.get("banner_gl", {}).get("current", []): # 使用 .get 避免 banner_gl 為 None 時出錯
-        rateups = banner.get("rateups", [])
-        if rateups:
-            rateup_ids = [name_en_to_id.get(name) for name in rateups if name_en_to_id.get(name)]
-            if rateup_ids:
-                gl_banners_to_insert.append((banner.get("gachaType"), rateup_ids[0], rateup_ids[1] if len(rateup_ids) > 1 else None))
-    if gl_banners_to_insert: cur.executemany("INSERT INTO current_banner_gl VALUES (?, ?, ?)", gl_banners_to_insert)
+            category_type = banner_item.get("CategoryType")
+            if category_type not in VALID_BANNER_TYPES:
+                continue
+
+            try:
+                sale_from_str = banner_item.get("SalePeriodFrom")
+                sale_to_str = banner_item.get("SalePeriodTo")
+
+                if not sale_from_str or not sale_to_str: continue
+
+                sale_from = UTC_PLUS_9.localize(datetime.datetime.strptime(sale_from_str, "%Y-%m-%d %H:%M:%S"))
+                sale_to = UTC_PLUS_9.localize(datetime.datetime.strptime(sale_to_str, "%Y-%m-%d %H:%M:%S"))
+                
+                if sale_from <= now_utc9 <= sale_to:
+                    info_char_ids = banner_item.get("InfoCharacterId", [])
+                    
+                    rateup_id = None # 預設為 None
+                    if category_type != "NormalGacha" and info_char_ids: 
+                        rateup_id = info_char_ids[0] 
+                    
+                    active_banners_to_insert.append((category_type, rateup_id))
+            except ValueError as ve:
+                print(f"解析卡池時間失敗: {banner_item.get('Id')}, From: {sale_from_str}, To: {sale_to_str}. 錯誤: {ve}")
+            except Exception as e:
+                print(f"處理卡池 {banner_item.get('Id')} 時發生未知錯誤: {e}")
+
+        cur.execute(f"DELETE FROM {banner_table_name}") # 先清空
+        if active_banners_to_insert:
+            cur.executemany(f"INSERT INTO {banner_table_name} (type, rateup_id) VALUES (?, ?)", active_banners_to_insert)
+            print(f"在 {banner_table_name} 中找到並寫入 {len(active_banners_to_insert)} 個活躍卡池。")
+        else:
+            print(f"在 {banner_table_name} 中沒有找到當前活躍的卡池。")
+
+    process_banner_data(api_data.get("banner_jp"), "current_banner_jp")
+    process_banner_data(api_data.get("banner_gl"), "current_banner_gl")
 
     con.commit()
     con.close()
