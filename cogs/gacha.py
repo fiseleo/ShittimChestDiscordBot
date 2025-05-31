@@ -1,303 +1,183 @@
-from discord.ext import commands
 import discord
-import json
-import random
+from discord.ext import commands
 from discord import app_commands
 from pathlib import Path
-import PIL
+import random
+import math
 import PIL.Image
 import PIL.ImageChops
-import math
+# 匯入我們新的資料庫查詢工具
+from .utils import gacha_db
 
-pwd = Path(__file__).parent
+# 將路徑設定移到 Cog 內部或作為全域常數
+ASSETS_DIR = Path(__file__).parent.parent / "assets"
+IMAGE_DIR = Path(__file__).parent.parent / "gacha_data" / "images"
 
-r = []
-sr = []
-ssr = []
-limited_ssr = []
-fes_ssr = []
-current_banners = []
+# 預先載入不會變動的圖片資源
+try:
+    MASK = PIL.Image.open(ASSETS_DIR / "mask.png")
+    BORDER = PIL.Image.open(ASSETS_DIR / "border.png")
+    STAR_1 = PIL.Image.open(ASSETS_DIR / "star.png")
+    STAR_2 = PIL.Image.open(ASSETS_DIR / "two_star.png")
+    STAR_3 = PIL.Image.open(ASSETS_DIR / "three_star.png")
+    PURPLE_GLOW = PIL.Image.open(ASSETS_DIR / "purple_glow.png")
+    YELLOW_GLOW = PIL.Image.open(ASSETS_DIR / "yellow_glow.png")
+    PICKUP = PIL.Image.open(ASSETS_DIR / "pickup.png")
+except FileNotFoundError as e:
+    raise FileNotFoundError(f"缺少核心素材圖片，請檢查 assets 資料夾: {e}")
 
-jp_r = []
-jp_sr = []
-jp_ssr = []
-jp_limited_ssr = []
-jp_fes_ssr = []
-jp_current_banners = []
 
-with open((pwd/"../gacha_data/global/r.txt").as_posix(), "r") as f:
-    r = f.read().splitlines()
-with open((pwd/"../gacha_data/global/sr.txt").as_posix(), "r") as f:
-    sr = f.read().splitlines()
-with open((pwd/"../gacha_data/global/ssr.txt").as_posix(), "r") as f:
-    ssr = f.read().splitlines()
-with open((pwd/"../gacha_data/global/limited_ssr.txt").as_posix(), "r") as f:
-    limited_ssr = f.read().splitlines()
-with open((pwd/"../gacha_data/global/fes_ssr.txt").as_posix(), "r") as f:
-    fes_ssr = f.read().splitlines()
-with open((pwd/"../gacha_data/global/current_banners.json").as_posix(), "r") as f:
-    current_banners = json.load(f)
-
-with open((pwd/"../gacha_data/japan/r.txt").as_posix(), "r", encoding="utf-8") as f:
-    jp_r = f.read().splitlines()
-with open((pwd/"../gacha_data/japan/sr.txt").as_posix(), "r", encoding="utf-8") as f:
-    jp_sr = f.read().splitlines()
-with open((pwd/"../gacha_data/japan/ssr.txt").as_posix(), "r", encoding="utf-8") as f:
-    jp_ssr = f.read().splitlines()
-with open((pwd/"../gacha_data/japan/limited_ssr.txt").as_posix(), "r", encoding="utf-8") as f:
-    jp_limited_ssr = f.read().splitlines()
-with open((pwd/"../gacha_data/japan/fes_ssr.txt").as_posix(), "r", encoding="utf-8") as f:
-    jp_fes_ssr = f.read().splitlines()
-with open((pwd/"../gacha_data/japan/current_banners.json").as_posix(), "r", encoding="utf-8") as f:
-    jp_current_banners = json.load(f)
-with open((pwd/"../gacha_data/japan/translate.json").as_posix(), "r", encoding="utf-8") as f:
-    translate = json.load(f)
-
-mask = PIL.Image.open((pwd/"../assets/mask.png").as_posix())
-border = PIL.Image.open((pwd/"../assets/border.png").as_posix())
-star = PIL.Image.open((pwd/"../assets/star.png").as_posix())
-two_star = PIL.Image.open((pwd/"../assets/two_star.png").as_posix())
-three_star = PIL.Image.open((pwd/"../assets/three_star.png").as_posix())
-purple_glow = PIL.Image.open((pwd/"../assets/purple_glow.png").as_posix())
-yellow_glow = PIL.Image.open((pwd/"../assets/yellow_glow.png").as_posix())
-pickup = PIL.Image.open((pwd/"../assets/pickup.png").as_posix())
-
-def pull(server, choice, last_pull):
-    new_r = (r if server == "gl" else jp_r).copy()
-    new_sr = (sr if server == "gl" else jp_sr).copy()
-    new_ssr = (ssr if server == "gl" else jp_ssr).copy()
-    new_limited_ssr = (limited_ssr if server == "gl" else jp_limited_ssr).copy()
-    new_fes_ssr = (fes_ssr if server == "gl" else jp_fes_ssr).copy()
-    banner = current_banners if server == "gl" else jp_current_banners
-
-    pickup_sr = []
-    pickup_ssr = []
-
-    # R, SR, SSR, Pickup SR, Pickup SSR, Fes SSR
-    weight = [78.5, 18.5, 3, 0, 0, 0]
-    if choice > -1:
-        if banner[choice]["gachaType"] == "PickupGacha":
-            for rateup in banner[choice]["rateups"]:
-                if rateup["raity"] == "SR":
-                    new_sr.remove(rateup["name"])
-                    # Move SR to Pickup SR
-                    weight[1] -= 3
-                    weight[3] += 3
-                    pickup_sr.append(rateup["name"])
-                else:
-                    new_ssr.remove(rateup["name"])
-                    # Move SSR to Pickup SSR
-                    weight[2] -= 0.7
-                    weight[4] += 0.7
-                    pickup_ssr.append(rateup["name"])
-        elif banner[choice]["gachaType"] == "LimitedGacha":
-            for rateup in banner[choice]["rateups"]:
-                new_limited_ssr.remove(rateup["name"])
-                # Move SSR to Pickup SSR
-                weight[2] -= 0.7
-                weight[4] += 0.7
-                pickup_ssr.append(rateup["name"])
-        elif banner[choice]["gachaType"] == "FesGacha":
-            # Fes SSR rate is 6%, Fes SSR rate is 9%, Pickup SSR rate is 0.7%
-            weight = [75.5, 18.5, 4.4, 0, 0.7, 0.9]
-            for rateup in banner[choice]["rateups"]:
-                new_fes_ssr.remove(rateup["name"])
-                pickup_ssr.append(rateup["name"])
-    if last_pull:
-        weight[1] += weight[0]
-        weight[0] = 0
-    # print(f"Pickup SSR: {pickup_ssr}")
-    # print(f"Pickup SR: {pickup_sr}")
-    # print(f"Weight: {weight}")
-    # print(f"Spark: {spark}")
-    # print("")
-
-    raity_result = random.choices(["R", "SR", "SSR", "Pickup SR", "Pickup SSR", "Fes SSR"], weight)[0]
-    result = {}
-    if raity_result == "R":
-        result["name"], result["raity"], result["server"] = random.choice(new_r), raity_result, server
-    elif raity_result == "SR":
-        result["name"], result["raity"], result["server"] = random.choice(new_sr), raity_result, server
-    elif raity_result == "SSR":
-        result["name"], result["raity"], result["server"] = random.choice(new_ssr), raity_result, server
-    elif raity_result == "Pickup SR":
-        result["name"], result["raity"], result["server"] = random.choice(pickup_sr), raity_result, server
-    elif raity_result == "Pickup SSR":
-        result["name"], result["raity"], result["server"] = random.choice(pickup_ssr), raity_result, server
-    elif raity_result == "Fes SSR":
-        result["name"], result["raity"], result["server"] = random.choice(new_fes_ssr), raity_result, server
-    return result 
-    
-def pull_ten(server, choice):
-    results = []
-    for i in range(10):
-        result = pull(server, choice, False if i != 9 else True)
-        results.append(result)
-    return results
-
-def generate_image(char_images):
-    image_count = len(char_images)
-
-    if image_count > 1:
-        base_image = PIL.Image.new("RGBA", size=(640, 140*math.ceil(image_count/5)+20), color=(194, 229, 245, 255))
-        for i in range(len(char_images)):
-            base_image.alpha_composite(char_images[i], dest=(i%5*120, i//5*140))
-    else: 
-        base_image = PIL.Image.new("RGBA", size=(640, 300), color=(194, 229, 245, 255))
-        base_image.alpha_composite(char_images[0], dest=(240, 70))
-    base_image.save("result.png")
-
-def create_image_single(result):
-    server = result["server"]
-    base_char_image = PIL.Image.new("RGBA", size=(160, 160), color=(0, 0, 0, 0))
-    if server == "gl":
-        char = PIL.Image.open((pwd/f"../gacha_data/global/image/{result['name']}.png").as_posix())
-    else:
-        char = PIL.Image.open((pwd/f"../gacha_data/japan/image/{translate[result['name']]}.png").as_posix())
-    char = char.convert("RGBA")
-    # print(PIL.ImageChops.difference(char, mask))
-    char = PIL.ImageChops.multiply(char, mask)
-    base_char_image.alpha_composite(char, dest=(20, 20))
-    raity = result["raity"]
-    if raity == "R":
-        base_char_image.alpha_composite(border, dest=(0, 0))
-        base_char_image.alpha_composite(star, dest=(0, 0))
-    elif raity == "SR" or raity == "Pickup SR":
-        base_char_image.alpha_composite(yellow_glow, dest=(0, 0))
-        base_char_image.alpha_composite(border, dest=(0, 0))
-        base_char_image.alpha_composite(two_star, dest=(0, 0))
-        if raity == "Pickup SR":
-            base_char_image.alpha_composite(pickup, dest=(0, 0))
-    elif raity == "SSR" or raity == "Pickup SSR":
-        base_char_image.alpha_composite(purple_glow, dest=(0, 0))
-        base_char_image.alpha_composite(border, dest=(0, 0))
-        base_char_image.alpha_composite(three_star, dest=(0, 0))
-        if raity == "Pickup SSR":
-            base_char_image.alpha_composite(pickup, dest=(0, 0))
-    return base_char_image
-
-def gacha_embed(server, choice, results):
-    banner = current_banners if server == "gl" else jp_current_banners
-    banner_name = "卡池："
-    banner_name += "國際服 " if server == "gl" else "日服 "
-    banner_type = banner[choice]["gachaType"] if choice > -1 else "PermanentGacha"
-    if choice > -1:
-        if banner_type == "PickupGacha":
-            banner_name += "特選招募 "
-        elif banner_type == "LimitedGacha":
-            banner_name += "限定招募 "
-        elif banner_type == "FesGacha":
-            banner_name += "Fes招募 "
-        for rateup in banner[choice]["rateups"]:
-            banner_name += f" {rateup['name']}"
-            if rateup != banner[choice]["rateups"][-1]:
-                banner_name += " & "
-    else:
-        banner_name += "常駐招募"
-
-    embed = discord.Embed(title="老師，請收下！", color=discord.Color.blue(), description=f"{banner_name}")
-    char_images = []
-    
-    for i in results:
-        char_images.append(create_image_single(i))
-    generate_image(char_images)
-    result_image = discord.File("result.png")
-    embed.set_image(url="attachment://result.png")
-    embed.set_thumbnail(url="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTZmzniB5Fiiz8ajKGCLmPHywDj_dCaR71O9O0DEcqV0g&s")
-
-    return embed, result_image
-
-class Dropdown(discord.ui.Select):
-    def __init__(self, mode = "ten"):
-        self.mode = mode
-        options = []
-        for banner in current_banners:
-            banner_name = ''
-            banner_type = banner["gachaType"]
-            if banner_type == "PickupGacha":
-                banner_type = "特選招募"
-            elif banner_type == "LimitedGacha":
-                banner_type = "限定招募"
-            elif banner_type == "FesGacha":
-                banner_type = "Fes招募"
-            for rateup in banner["rateups"]:
-                banner_name += rateup["name"]
-                if rateup != banner["rateups"][-1]:
-                    banner_name += " & "
-            options.append(discord.SelectOption(label=f"國際服：{banner_name}", value=str(current_banners.index(banner)), description=banner_type))
-        options.append(discord.SelectOption(label="國際服：常駐招募", value="-1", description=""))
-
-        for banner in jp_current_banners:
-            banner_name = ''
-            banner_type = banner["gachaType"]
-            if banner_type == "PickupGacha":
-                banner_type = "特選招募"
-            elif banner_type == "LimitedGacha":
-                banner_type = "限定招募"
-            elif banner_type == "FesGacha":
-                banner_type = "Fes招募"
-            for rateup in banner["rateups"]:
-                banner_name += rateup["name"]
-                if rateup != banner["rateups"][-1]:
-                    banner_name += " & "
-            options.append(discord.SelectOption(label=f"日服：{banner_name}", value=str(jp_current_banners.index(banner) + len(current_banners)), description=banner_type))
-        options.append(discord.SelectOption(label="日服：常駐招募", value="-2", description=""))
-
-        super().__init__(placeholder="選擇卡池", options=options, custom_id="gacha_dropdown")
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        mode = self.mode
-        choice = int(self.values[0])
-        if choice == -2:
-            server = "jp"
-        else:
-            server = "gl" if choice < len(current_banners) else "jp"
-        if server == "jp":
-            choice -= len(current_banners)
-        
-        if mode == "single":
-            result = pull(server, choice, False)
-            results = [result]
-        elif mode == "ten":
-            results = pull_ten(server, choice)
-        embed, result_image = gacha_embed(server, choice, results)
-        view = View(mode, server, choice, type="button")
-        await interaction.followup.send(content=interaction.user.mention, file=result_image, embed=embed, view=view)
-
-class Button(discord.ui.Button):
-    def __init__(self, mode, server, choice):
-        super().__init__(label="再抽一次！", style=discord.ButtonStyle.primary, custom_id="gacha_button")
-        self.mode = mode
-        self.server = server
-        self.choice = choice
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        mode = self.mode
-        choice = int(self.choice)
-        server = self.server
-        
-        if mode == "single":
-            result = pull(server, choice, False)
-            results = [result]
-        elif mode == "ten":
-            results = pull_ten(server, choice)
-        embed, result_image = gacha_embed(server, choice, results)
-        view = View(mode, server, choice, type="button")
-        await interaction.followup.send(content=interaction.user.mention, file=result_image, embed=embed, view=view)
-
-class View(discord.ui.View):
-    def __init__(self, mode = "ten", server = "gl", choice = "-1", type = "dropdown"):
-        super().__init__(timeout=None)
-        if type == "dropdown":
-            self.add_item(Dropdown(mode))
-        if type == "button":
-            self.add_item(Button(mode, server, choice))
+# --- Gacha Cog 主體 ---
 
 class Gacha(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # 在 Cog 初始化時，從資料庫載入所有資料到記憶體中
+        self.load_data_from_db()
+
+    def load_data_from_db(self):
+        """從資料庫載入並快取角色池和卡池資訊。"""
+        print("正在從資料庫載入轉蛋資料...")
+        self.pools_gl = gacha_db.get_character_pools("global")
+        self.banners_gl = gacha_db.get_current_banners("global")
+        
+        self.pools_jp = gacha_db.get_character_pools("japan")
+        self.banners_jp = gacha_db.get_current_banners("japan")
+        
+        # 將 Fes 限定池從一般限定池中分離出來 (如果需要)
+        # 這裡簡化處理，假設所有限定都在一個池裡，由抽卡邏輯決定
+        print("轉蛋資料載入完成。")
+
+    def pull_logic(self, server: str, choice: int, last_pull: bool):
+        """核心抽卡邏輯，決定抽出的角色。"""
+        pools = self.pools_gl if server == "global" else self.pools_jp
+        banners = self.banners_gl if server == "global" else self.banners_jp
+        
+        # 複製卡池以避免修改原始快取資料
+        pool_r = pools["R"].copy()
+        pool_sr = pools["SR"].copy()
+        pool_ssr = pools["SSR"].copy()
+        pool_limited = pools["Limited"].copy()
+
+        pickup_sr, pickup_ssr = [], []
+        
+        # R, SR, SSR, Pickup_SR, Pickup_SSR
+        weights = [78.5, 18.5, 3.0, 0, 0]
+        gacha_type = "PermanentGacha"
+
+        if choice > -1 and choice < len(banners):
+            banner = banners[choice]
+            gacha_type = banner["gachaType"]
+            
+            # 從卡池中移除 UP 角，放入 UP 池
+            for rateup in banner["rateups"]:
+                rateup_id = rateup["id"]
+                if rateup["rarity"] == "SR":
+                    pool_sr = [char for char in pool_sr if char["id"] != rateup_id]
+                    pickup_sr.append(rateup)
+                else: # SSR
+                    pool_ssr = [char for char in pool_ssr if char["id"] != rateup_id]
+                    pool_limited = [char for char in pool_limited if char["id"] != rateup_id]
+                    pickup_ssr.append(rateup)
+
+            # 根據卡池類型調整權重
+            if gacha_type == "PickupGacha":
+                if pickup_sr:
+                    weights[1] -= 3.0
+                    weights[3] += 3.0
+                if pickup_ssr:
+                    weights[2] -= 0.7 * len(pickup_ssr)
+                    weights[4] += 0.7 * len(pickup_ssr)
+            elif gacha_type == "LimitedGacha":
+                if pickup_ssr:
+                    weights[2] -= 0.7 * len(pickup_ssr)
+                    weights[4] += 0.7 * len(pickup_ssr)
+            elif gacha_type == "FesGacha":
+                weights = [75.5, 18.5, 5.3, 0, 0.7] # 總計 6% SSR，0.7% UP
+        
+        # 十連保底 SR
+        if last_pull:
+            weights[1] += weights[0]
+            weights[0] = 0
+
+        # 抽卡
+        try:
+            rarity_result = random.choices(["R", "SR", "SSR", "Pickup_SR", "Pickup_SSR"], weights)[0]
+            
+            result = {}
+            if rarity_result == "R" and pool_r:
+                result = random.choice(pool_r)
+                result["rarity"] = "R"
+            elif rarity_result == "SR" and pool_sr:
+                result = random.choice(pool_sr)
+                result["rarity"] = "SR"
+            elif rarity_result == "SSR" and pool_ssr:
+                result = random.choice(pool_ssr)
+                result["rarity"] = "SSR"
+            elif rarity_result == "Pickup_SR" and pickup_sr:
+                result = random.choice(pickup_sr)
+                result["rarity"] = "Pickup_SR"
+            elif rarity_result == "Pickup_SSR" and pickup_ssr:
+                result = random.choice(pickup_ssr)
+                result["rarity"] = "Pickup_SSR"
+            else: # 如果目標池為空，則從 R 池遞補
+                result = random.choice(pool_r)
+                result["rarity"] = "R"
+
+            result["server"] = server
+            return result
+        except IndexError: # 當所有卡池都為空時的極端情況
+            return {"id": 0, "name": "神秘的卷軸", "rarity": "R", "server": server}
+    
+    def create_single_image(self, result: dict):
+        """根據抽卡結果生成單張角色頭像圖。"""
+        base_char_image = PIL.Image.new("RGBA", (160, 160), (0, 0, 0, 0))
+        
+        try:
+            # 圖片路徑現在統一使用 ID
+            char_img_path = IMAGE_DIR / f"{result['id']}.png"
+            with PIL.Image.open(char_img_path) as char:
+                char = char.convert("RGBA")
+                char = PIL.ImageChops.multiply(char, MASK)
+                base_char_image.alpha_composite(char, (20, 20))
+        except FileNotFoundError:
+            print(f"警告：找不到學生圖片 {result['id']}.png")
+
+        rarity = result["rarity"]
+        if rarity == "R":
+            base_char_image.alpha_composite(BORDER)
+            base_char_image.alpha_composite(STAR_1)
+        elif rarity in ("SR", "Pickup_SR"):
+            base_char_image.alpha_composite(YELLOW_GLOW)
+            base_char_image.alpha_composite(BORDER)
+            base_char_image.alpha_composite(STAR_2)
+            if rarity == "Pickup_SR":
+                base_char_image.alpha_composite(PICKUP)
+        elif rarity in ("SSR", "Pickup_SSR"):
+            base_char_image.alpha_composite(PURPLE_GLOW)
+            base_char_image.alpha_composite(BORDER)
+            base_char_image.alpha_composite(STAR_3)
+            if rarity == "Pickup_SSR":
+                base_char_image.alpha_composite(PICKUP)
+                
+        return base_char_image
+
+    def generate_gacha_image(self, results: list):
+        """將多張角色頭像圖合成一張大的結果圖。"""
+        char_images = [self.create_single_image(res) for res in results]
+        
+        image_count = len(char_images)
+        if image_count > 1:
+            cols = 5
+            rows = math.ceil(image_count / cols)
+            base_image = PIL.Image.new("RGBA", (cols * 120 + 40, rows * 140), (194, 229, 245, 255))
+            for i, img in enumerate(char_images):
+                base_image.alpha_composite(img, (i % cols * 120, i // cols * 140))
+        else:
+            base_image = PIL.Image.new("RGBA", (640, 300), (194, 229, 245, 255))
+            base_image.alpha_composite(char_images[0], (240, 70))
+            
+        base_image.save("result.png")
 
     @app_commands.command(name="gacha", description="模擬抽卡")
     @app_commands.describe(mode="選擇一次招募的數量")
@@ -306,10 +186,110 @@ class Gacha(commands.Cog):
         app_commands.Choice(name="十抽", value="ten")
     ])
     async def gacha(self, interaction: discord.Interaction, mode: app_commands.Choice[str]):
-        embed = discord.Embed(title="招募", description="選擇你的招募", color=discord.Color.blue())
-        await interaction.response.send_message(embed=embed, view=View(mode.value), ephemeral=True)
+        """主斜線指令，顯示卡池選擇介面。"""
+        view = GachaView(cog=self, mode=mode.value)
+        await interaction.response.send_message("請選擇您要進行招募的卡池：", view=view, ephemeral=True)
+
+
+# --- UI 元件 ---
+
+class GachaDropdown(discord.ui.Select):
+    def __init__(self, cog: Gacha, mode: str):
+        self.cog = cog
+        self.mode = mode
+        
+        options = []
+        # 國際服卡池
+        for i, banner in enumerate(self.cog.banners_gl):
+            banner_name = " & ".join([r["name"] for r in banner["rateups"]])
+            options.append(discord.SelectOption(label=f"國際服：{banner_name}", value=f"global_{i}"))
+        options.append(discord.SelectOption(label="國際服：常駐招募", value="global_-1"))
+
+        # 日服卡池
+        for i, banner in enumerate(self.cog.banners_jp):
+            banner_name = " & ".join([r["name"] for r in banner["rateups"]])
+            options.append(discord.SelectOption(label=f"日服：{banner_name}", value=f"japan_{i}"))
+        options.append(discord.SelectOption(label="日服：常駐招募", value="japan_-1"))
+
+        super().__init__(placeholder="選擇卡池", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        
+        server, choice_str = self.values[0].split("_")
+        choice = int(choice_str)
+
+        if self.mode == "single":
+            results = [self.cog.pull_logic(server, choice, False)]
+        else: # ten
+            results = [self.cog.pull_logic(server, choice, i == 9) for i in range(10)]
+        
+        self.cog.generate_gacha_image(results)
+        
+        banner_name = "常駐招募"
+        banners = self.cog.banners_gl if server == "global" else self.cog.banners_jp
+        if choice > -1:
+            banner_name = " & ".join([r["name"] for r in banners[choice]["rateups"]])
+
+        embed = discord.Embed(
+            title=f"老師，這是您的招募結果！",
+            description=f"**伺服器：** {'國際服' if server == 'global' else '日服'}\n**卡池：** {banner_name}",
+            color=discord.Color.blue()
+        )
+        file = discord.File("result.png", filename="result.png")
+        embed.set_image(url="attachment://result.png")
+        
+        view = GachaView(cog=self.cog, mode=self.mode, server=server, choice=choice, is_button=True)
+        await interaction.followup.send(content=interaction.user.mention, file=file, embed=embed, view=view)
+
+
+class GachaButton(discord.ui.Button):
+    def __init__(self, cog: Gacha, mode: str, server: str, choice: int):
+        super().__init__(label="再抽一次！", style=discord.ButtonStyle.primary)
+        self.cog = cog
+        self.mode = mode
+        self.server = server
+        self.choice = choice
+
+    async def callback(self, interaction: discord.Interaction):
+        # 與 Dropdown 的 callback 執行幾乎相同的邏輯
+        await interaction.response.defer()
+        
+        if self.mode == "single":
+            results = [self.cog.pull_logic(self.server, self.choice, False)]
+        else: # ten
+            results = [self.cog.pull_logic(self.server, self.choice, i == 9) for i in range(10)]
+            
+        self.cog.generate_gacha_image(results)
+
+        banner_name = "常駐招募"
+        banners = self.cog.banners_gl if self.server == "global" else self.cog.banners_jp
+        if self.choice > -1:
+             banner_name = " & ".join([r["name"] for r in banners[self.choice]["rateups"]])
+
+        embed = discord.Embed(
+            title=f"老師，這是您的招募結果！",
+            description=f"**伺服器：** {'國際服' if self.server == 'global' else '日服'}\n**卡池：** {banner_name}",
+            color=discord.Color.blue()
+        )
+        file = discord.File("result.png", filename="result.png")
+        embed.set_image(url="attachment://result.png")
+        
+        view = GachaView(cog=self.cog, mode=self.mode, server=self.server, choice=self.choice, is_button=True)
+        await interaction.followup.send(content=interaction.user.mention, file=file, embed=embed, view=view)
+
+
+class GachaView(discord.ui.View):
+    def __init__(self, cog: Gacha, mode: str, server: str = "global", choice: int = -1, is_button: bool = False):
+        super().__init__(timeout=300) # 5分鐘後 view 會失效
+        if is_button:
+            self.add_item(GachaButton(cog, mode, server, choice))
+        else:
+            self.add_item(GachaDropdown(cog, mode))
+
+
+# --- Cog 設定 ---
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Gacha(bot))
-    bot.add_view(View())
-    print("Gacha cog loaded")
+    print("Gacha cog has been reloaded and is now using the database.")

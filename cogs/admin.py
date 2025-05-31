@@ -1,135 +1,82 @@
 from discord.ext import commands
-from .utils import get_data_global
-from .utils import get_data_japan
-from .utils import get_raid_global
-from .utils import raid_db
-from pathlib import Path
 import discord
+from pathlib import Path
 
-pwd = Path(__file__).parent
+# --- 優化：權限管理 ---
 
-with open((pwd/"../config/admin_roles.txt").as_posix(), "r", encoding="utf-8") as f:
-    ADMIN_ROLES = f.read().splitlines()
+ADMIN_ROLES_PATH = Path(__file__).parent.parent / "config/admin_roles.txt"
+ADMIN_ROLES = []
+
+try:
+    with open(ADMIN_ROLES_PATH, "r", encoding="utf-8") as f:
+        ADMIN_ROLES = [line for line in f.read().splitlines() if line]
+except FileNotFoundError:
+    print(f"警告：權限設定檔 '{ADMIN_ROLES_PATH}' 不存在。所有管理員指令將無法被任何人使用。")
+
+def is_bot_admin():
+    """一個可重用的檢查器，判斷指令使用者是否擁有管理員角色。"""
+    async def predicate(ctx: commands.Context) -> bool:
+        if not ctx.guild or not ADMIN_ROLES:
+            return False
+        author_role_names = {role.name for role in ctx.author.roles}
+        return not author_role_names.isdisjoint(ADMIN_ROLES)
+    return commands.check(predicate)
+
+# --- Cog 主體 ---
 
 class Admin(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
     
-    @commands.command(name="reload", description="重新載入指令")
-    async def reload(self, ctx:commands.Context):
-        try:
-            if [i for i in ctx.author.roles if i.name in ADMIN_ROLES]:
-                await self.bot.reload_extension('cogs.admin')
-                await self.bot.reload_extension('cogs.gacha')
-                await self.bot.reload_extension('cogs.update')
-                await self.bot.reload_extension('cogs.rps')
-                await self.bot.reload_extension('cogs.raid')
-                await ctx.send("Reloaded all commands")
-        except Exception as e:
-            await ctx.send(e)
-
-    @commands.command(name="update", description="手動更新資料庫")
-    async def update(self, ctx:commands.Context):
-        try:
-            if [i for i in ctx.author.roles if i.name in ADMIN_ROLES]:
-                get_data_global.update()
-                get_data_japan.update()
-                await self.bot.reload_extension('cogs.gacha')
-                await ctx.send("Updated database manually")
-        except Exception as e:
-            await ctx.send(e)
-
-    @commands.command(name="sync", description="")
-    async def sync(self, ctx:commands.Context):
-        try:
-            if [i for i in ctx.author.roles if i.name in ADMIN_ROLES]:
-                self.bot.tree.clear_commands(guild=discord.Object(id=863849091821994014))
-                self.bot.tree.copy_global_to(guild=discord.Object(id=863849091821994014))
-                synced = await self.bot.tree.sync(guild=discord.Object(id=863849091821994014))
-                await ctx.send(f"{len(synced)} Commands synced")
-        except Exception as e:
-            await ctx.send(e)
-
-    @commands.command(name="sync-global", description="同步全域指令")
-    async def sync_global(self, ctx:commands.Context):
-        try:
-            if [i for i in ctx.author.roles if i.name in ADMIN_ROLES]:
-                synced = await self.bot.tree.sync()
-                await ctx.send(f"{len(synced)} Commands synced")
-        except Exception as e:
-            await ctx.send(e)
-    
-    @commands.command(name="resetglta", description="")
-    async def resetglta(self, ctx:commands.Context):
-        try:
-            if [i for i in ctx.author.roles if i.name in ADMIN_ROLES]:
-                raid_db.delete_data("global", "raid")
-                await ctx.send("Reset global raid data")
-        except Exception as e:
-            await ctx.send(e)
-    
-    @commands.command(name="resetglga", description="")
-    async def resetglga(self, ctx:commands.Context):
-        try:
-            if [i for i in ctx.author.roles if i.name in ADMIN_ROLES]:
-                raid_db.delete_data("global", "eliminate_raid")
-                await ctx.send("Reset global eliminate raid data")
-        except Exception as e:
-            await ctx.send(e)
-    
-    @commands.command(name="resetjpta", description="")
-    async def resetjpta(self, ctx:commands.Context):
-        try:
-            if [i for i in ctx.author.roles if i.name in ADMIN_ROLES]:
-                raid_db.delete_data("japan", "raid")
-                await ctx.send("Reset japan raid data")
-        except Exception as e:
-            await ctx.send(e)
-    
-    @commands.command(name="resetjpga", description="")
-    async def resetjpga(self, ctx:commands.Context):
-        try:
-            if [i for i in ctx.author.roles if i.name in ADMIN_ROLES]:
-                raid_db.delete_data("japan", "eliminate_raid")
-                await ctx.send("Reset japan eliminate raid data")
-        except Exception as e:
-            await ctx.send(e)
-
-    @commands.command(name="resetgltaet", description="")
-    async def resetgltet(self, ctx:commands.Context):
-        try:
-            if [i for i in ctx.author.roles if i.name in ADMIN_ROLES]:
-                raid_db.delete_excel_table("global", "raid")
-                await ctx.send("Reset global raid excel table")
-        except Exception as e:
-            await ctx.send(e)
-    
-    @commands.command(name="resetglgaet", description="")
-    async def resetglet(self, ctx:commands.Context):
-        try:
-            if [i for i in ctx.author.roles if i.name in ADMIN_ROLES]:
-                raid_db.delete_excel_table("global", "eliminate_raid")
-                await ctx.send("Reset global eliminate raid excel table")
-        except Exception as e:
-            await ctx.send(e)
-    
-    @commands.command(name="resetjptaet", description="")
-    async def resetjptet(self, ctx:commands.Context):
-        try:
-            if [i for i in ctx.author.roles if i.name in ADMIN_ROLES]:
-                raid_db.delete_excel_table("japan", "raid")
-                await ctx.send("Reset japan raid excel table")
-        except Exception as e:
-            await ctx.send(e)
-    
-    @commands.command(name="resetjpgaet", description="")
-    async def resetjpet(self, ctx:commands.Context):
-        try:
-            if [i for i in ctx.author.roles if i.name in ADMIN_ROLES]:
-                raid_db.delete_excel_table("japan", "eliminate_raid")
-                await ctx.send("Reset japan eliminate raid excel table")
-        except Exception as e:
-            await ctx.send(e)
+    @commands.command(name="reload", description="重新載入所有主要的 Cogs")
+    @is_bot_admin()
+    async def reload(self, ctx: commands.Context):
+        # 從重載列表中移除 'cogs.raid'
+        cogs_to_reload = ['cogs.admin', 'cogs.gacha', 'cogs.update', 'cogs.rps']
+        reloaded_cogs = []
+        failed_cogs = []
+        for cog in cogs_to_reload:
+            try:
+                await self.bot.reload_extension(cog)
+                reloaded_cogs.append(cog)
+            except Exception as e:
+                failed_cogs.append(f"{cog} ({e})")
         
-async def setup(bot):
+        message = ""
+        if reloaded_cogs:
+            message += f"✅ 成功重新載入: `{'`, `'.join(reloaded_cogs)}`\n"
+        if failed_cogs:
+            message += f"❌ 載入失敗: `{'`, `'.join(failed_cogs)}`"
+        await ctx.send(message)
+
+    @commands.command(name="update", description="手動觸發資料庫更新")
+    @is_bot_admin()
+    async def update(self, ctx: commands.Context):
+        await ctx.send("▶️ 正在手動觸發背景更新任務...")
+        update_cog = self.bot.get_cog('UpdateTasks')
+        if update_cog and hasattr(update_cog, 'update_data_loop'):
+            await update_cog.update_data_loop()
+            await ctx.send("✅ 背景更新任務已觸發完成。請查看主控台輸出確認進度。")
+        else:
+            await ctx.send("❌ 錯誤：找不到 'UpdateTasks' Cog 或更新迴圈。")
+
+    @commands.command(name="sync", description="同步當前伺服器的斜線指令")
+    @is_bot_admin()
+    async def sync(self, ctx: commands.Context):
+        if not ctx.guild:
+            return await ctx.send("這個指令只能在伺服器中使用。")
+        guild_obj = discord.Object(id=ctx.guild.id)
+        self.bot.tree.copy_global_to(guild=guild_obj)
+        synced = await self.bot.tree.sync(guild=guild_obj)
+        await ctx.send(f"✅ 已同步 {len(synced)} 個指令到本伺服器。")
+
+    @commands.command(name="sync-global", description="同步全域斜線指令")
+    @is_bot_admin()
+    async def sync_global(self, ctx: commands.Context):
+        synced = await self.bot.tree.sync()
+        await ctx.send(f"✅ 已同步 {len(synced)} 個全域指令。")
+
+    # --- Raid 資料重置指令已被完全移除 ---
+
+async def setup(bot: commands.Bot):
     await bot.add_cog(Admin(bot))
