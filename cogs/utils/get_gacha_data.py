@@ -233,6 +233,16 @@ def update():
 
     process_banner_data(api_data.get("banner_jp"), "current_banner_jp")
     process_banner_data(api_data.get("banner_gl"), "current_banner_gl")
+    # 不要有2個星野(武裝) 好冷，好熱，好冷，好熱！
+    target_id_to_delete = 10099
+    print(f"正在執行最後流程：嘗試從資料庫中刪除指定的學生 ID: {target_id_to_delete}...")
+    cur.execute("DELETE FROM students_list WHERE id = ?", (target_id_to_delete,))
+    
+    # cur.rowcount 會回傳上一條指令影響的行數
+    if cur.rowcount > 0:
+        print(f"成功從 students_list 資料表中刪除 ID: {target_id_to_delete} 的記錄。")
+    else:
+        print(f"在 students_list 資料表中未找到 ID: {target_id_to_delete} 的記錄，無需刪除。")
 
     con.commit()
     con.close()

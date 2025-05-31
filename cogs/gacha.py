@@ -6,10 +6,10 @@ import random
 import math
 import PIL.Image
 import PIL.ImageChops
-from .utils import gacha_db
+from .utils import gacha_db # 使用我們更新後的 gacha_db
 
 ASSETS_DIR = Path(__file__).parent.parent / "assets"
-IMAGE_DIR = Path(__file__).parent.parent / "gacha_data" / "images" 
+IMAGE_DIR = Path(__file__).parent.parent / "gacha_data" / "images"
 
 try:
     MASK = PIL.Image.open(ASSETS_DIR / "mask.png")
@@ -19,10 +19,9 @@ try:
     STAR_3 = PIL.Image.open(ASSETS_DIR / "three_star.png")
     PURPLE_GLOW = PIL.Image.open(ASSETS_DIR / "purple_glow.png")
     YELLOW_GLOW = PIL.Image.open(ASSETS_DIR / "yellow_glow.png")
-    PICKUP = PIL.Image.open(ASSETS_DIR / "pickup.png") 
+    PICKUP_ICON = PIL.Image.open(ASSETS_DIR / "pickup.png")
 except FileNotFoundError as e:
     raise FileNotFoundError(f"缺少核心素材圖片，請檢查 assets 資料夾: {e}")
-
 
 class Gacha(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -30,188 +29,189 @@ class Gacha(commands.Cog):
         self.load_data_from_db()
 
     def load_data_from_db(self):
-        """從資料庫載入並快取角色池和卡池資訊。"""
         print("正在從資料庫載入轉蛋資料...")
         self.pools_gl = gacha_db.get_character_pools("global")
         self.banners_gl = gacha_db.get_current_banners("global")
         
         self.pools_jp = gacha_db.get_character_pools("japan")
         self.banners_jp = gacha_db.get_current_banners("japan")
-        
         print("轉蛋資料載入完成。")
 
     def pull_logic(self, server: str, choice: int, last_pull: bool):
-        """改進的核心抽卡邏輯，正確處理所有卡池類型和機率。"""
-        pools = self.pools_gl if server == "global" else self.pools_jp
-        banners = self.banners_gl if server == "global" else self.banners_jp
+        pools_source = self.pools_gl if server == "global" else self.pools_jp
+        all_banners_for_server = self.banners_gl if server == "global" else self.banners_jp
         
-        # 建立基礎卡池副本
-        pool_r = pools["R"].copy()
-        pool_sr = pools["SR"].copy()
-        pool_ssr = pools["SSR"].copy()
-        pool_limited = pools["Limited"].copy()
-        pool_fes = pools["Fes"].copy()
+        # 深拷貝基礎卡池
+        pool_r = pools_source["R"].copy()
+        pool_sr = pools_source["SR"].copy()
+        pool_ssr_permanent = pools_source["SSR"].copy() # 常駐三星
+        pool_limited_normal = pools_source["Limited_Normal"].copy() # 普通限定
+        pool_limited_fes = pools_source["Limited_Fes"].copy() # Fes 限定
 
-        # 初始化pickup卡池和權重
-        pickup_sr, pickup_ssr, pickup_fes = [], [], []
+        current_pickup_char = None # 當前卡池的 Pick Up 角色 (字典)
         
-        # 基礎權重: [R, SR, SSR, Pickup_SR, Pickup_SSR, Pickup_Fes, Limited_Other, Fes_Other]
-        weights = [78.5, 18.5, 3.0, 0, 0, 0, 0, 0]
+        # 預設權重: R, SR, SSR_常駐, SSR_PickUp, SSR_Limited_Normal_Other, SSR_Limited_Fes_PickUp, SSR_Limited_Fes_Other
+        # 索引:     0,  1,  2,         3,            4,                        5,                         6
+        weights = [78.5, 18.5, 3.0, 0, 0, 0, 0] 
+        result_categories = ["R", "SR", "SSR_Perm", "SSR_PickUp", "SSR_Lim_Norm_Other", "SSR_Fes_PickUp", "SSR_Fes_Other"]
+        
         gacha_type = "NormalGacha"
-        
-        # 處理特定卡池
-        if choice > -1 and choice < len(banners):
-            banner = banners[choice]
-            gacha_type = banner["gachaType"]
-            
-            # 處理pickup角色
-            for rateup in banner["rateups"]:
-                rateup_id = rateup["id"]
-                rateup_char = None
-                
-                # 從對應的卡池中找到並移除pickup角色
-                if rateup["rarity"] == "SR":
-                    for char in pool_sr:
-                        if char["id"] == rateup_id:
-                            rateup_char = char.copy()
-                            pool_sr.remove(char)
-                            break
-                    if rateup_char:
-                        pickup_sr.append(rateup_char)
-                else:  # SSR
-                    # 先檢查常駐SSR池
-                    for char in pool_ssr:
-                        if char["id"] == rateup_id:
-                            rateup_char = char.copy()
-                            pool_ssr.remove(char)
-                            break
-                    
-                    # 如果沒找到，檢查限定池
-                    if not rateup_char:
-                        for char in pool_limited:
-                            if char["id"] == rateup_id:
-                                rateup_char = char.copy()
-                                pool_limited.remove(char)
-                                break
-                    
-                    # 如果還沒找到，檢查Fes池
-                    if not rateup_char:
-                        for char in pool_fes:
-                            if char["id"] == rateup_id:
-                                rateup_char = char.copy()
-                                pool_fes.remove(char)
-                                break
-                    
-                    # 根據角色類型加入對應的pickup池
-                    if rateup_char:
-                        # 判斷是否為Fes角色 (假設Fes角色的is_limited為3)
-                        if any(char["id"] == rateup_id for char in pools["Fes"]):
-                            pickup_fes.append(rateup_char)
-                        else:
-                            pickup_ssr.append(rateup_char)
 
-            # 根據卡池類型調整權重
-            if gacha_type == "PickupGacha":
-                # 常駐pickup卡池
-                if pickup_sr:
-                    weights[1] -= 3.0  # 普通SR減少3%
-                    weights[3] += 3.0  # Pickup SR增加3%
-                if pickup_ssr:
-                    pickup_rate = 0.7 * len(pickup_ssr)
-                    weights[2] -= pickup_rate  # 普通SSR減少
-                    weights[4] += pickup_rate  # Pickup SSR增加
-                    
-            elif gacha_type == "LimitedGacha":
-                # 限定pickup卡池
-                if pickup_ssr:
-                    pickup_rate = 0.7 * len(pickup_ssr)
-                    weights[2] -= pickup_rate  # 普通SSR減少
-                    weights[4] += pickup_rate  # Pickup SSR增加
-                    
-                    # 限定卡池可以抽到其他同期限定角色
-                    if pool_limited:
-                        limited_rate = pickup_rate * 0.3  # 其他限定角色機率較低
-                        weights[2] -= limited_rate
-                        weights[6] += limited_rate  # Limited_Other
-                        
+        if choice > -1 and choice < len(all_banners_for_server):
+            selected_banner = all_banners_for_server[choice]
+            gacha_type = selected_banner["gachaType"]
+            
+            if selected_banner.get("rateups") and selected_banner["rateups"]:
+                current_pickup_char = selected_banner["rateups"][0] # 只取第一個 pick up
+                
+                # 從相應卡池中移除 UP 角，避免重複計算機率
+                if current_pickup_char["rarity"] == "SR":
+                    pool_sr = [char for char in pool_sr if char["id"] != current_pickup_char["id"]]
+                else: # SSR Pick Up
+                    if gacha_type == "FesGacha": # current_pickup_char["is_limited_type"] == 3
+                        pool_limited_fes = [char for char in pool_limited_fes if char["id"] != current_pickup_char["id"]]
+                    elif gacha_type == "LimitedGacha": # current_pickup_char["is_limited_type"] == 1
+                        pool_limited_normal = [char for char in pool_limited_normal if char["id"] != current_pickup_char["id"]]
+                    else: # PickupGacha (常駐UP) current_pickup_char["is_limited_type"] == 0
+                        pool_ssr_permanent = [char for char in pool_ssr_permanent if char["id"] != current_pickup_char["id"]]
+            
+            # --- 權重調整 ---
+            if gacha_type == "PickupGacha": # 常駐 UP
+                if current_pickup_char and current_pickup_char["rarity"] == "SSR":
+                    weights[2] -= 0.7  # 常駐SSR機率降低
+                    weights[3] += 0.7  # Pickup SSR 機率增加
+                # SR UP 暫不改變總SR機率，僅提高特定SR出率 (這部分需細化，目前簡化)
+            
+            elif gacha_type == "LimitedGacha": # 普通限定 UP
+                # 總三星率 3%
+                weights[3] = 0.7 # 當期 UP 的限定 SSR (current_pickup_char)
+                
+                # 「同期其他 UP 的限定 SSR」: 機率與常駐 SSR 一樣
+                # 需要找出所有當前活躍的 LimitedGacha 的 UP 角 (除了自己)
+                concurrent_limited_up_others_ids = []
+                for b_idx, b_info in enumerate(all_banners_for_server):
+                    if b_idx == choice: continue # 跳過自己
+                    if b_info["gachaType"] == "LimitedGacha" and b_info.get("rateups") and b_info["rateups"]:
+                        # 假設 rateup 的 is_limited_type 都是 1
+                        concurrent_limited_up_others_ids.append(b_info["rateups"][0]["id"])
+                
+                pool_concurrent_limited_others = [
+                    char for char in pool_limited_normal 
+                    if char["id"] in concurrent_limited_up_others_ids and (not current_pickup_char or char["id"] != current_pickup_char["id"])
+                ]
+
+                num_permanent_ssr = len(pool_ssr_permanent)
+                num_concurrent_limited_others = len(pool_concurrent_limited_others)
+                total_off_banner_pool_size = num_permanent_ssr + num_concurrent_limited_others
+                if total_off_banner_pool_size > 0:
+                    weights[2] = (num_permanent_ssr / total_off_banner_pool_size) * 2.3
+                    weights[4] = (num_concurrent_limited_others / total_off_banner_pool_size) * 2.3
+                    #print(f"調整後權重 - SSR_Perm: {weights[2]}, SSR_Lim_Norm_Other: {weights[4]} (總大小: {total_off_banner_pool_size})")
+                else: # 單 UP 角
+                    weights[2] = 2.3
+                    weights[4] = 0
+
+                
             elif gacha_type == "FesGacha":
-                # Fes卡池：總SSR機率翻倍到6%
-                total_ssr_rate = 6.0
-                weights[0] = 75.5  # R機率降低到75.5%
-                weights[1] = 18.5  # SR機率保持18.5%
-                
-                if pickup_fes:
-                    pickup_fes_rate = 0.7 * len(pickup_fes)
-                    weights[5] = pickup_fes_rate  # Pickup Fes
-                    
-                    # 其他Fes角色平分剩餘機率
-                    remaining_fes_count = len(pool_fes)
-                    if remaining_fes_count > 0:
-                        other_fes_rate = min(0.9, (total_ssr_rate - pickup_fes_rate) * 0.2)
-                        weights[7] = other_fes_rate  # Fes_Other
-                        remaining_ssr_rate = total_ssr_rate - pickup_fes_rate - other_fes_rate
-                    else:
-                        remaining_ssr_rate = total_ssr_rate - pickup_fes_rate
-                        
-                    weights[2] = max(0, remaining_ssr_rate)  # 常駐SSR
+                # 總三星率 6%
+                weights[5] = 0.7  # 當期 UP 的 Fes SSR (current_pickup_char)
+                # 其他 Fes 限定角均分 0.9%
+                num_other_fes = len(pool_limited_fes) # pool_limited_fes 此時已移除了UP角
+                if num_other_fes > 0:
+                    # weights[6] (SSR_Fes_Other) 總共佔 0.9%
+                    # 這裡的 weights[6] 應該是總機率，選擇時再均分
+                    weights[6] = 0.9 
                 else:
-                    weights[2] = total_ssr_rate  # 全部給常駐SSR
+                    weights[6] = 0
+                # 常駐三星均分剩餘 4.4% (6 - 0.7 - 0.9)
+                weights[2] = 4.4 
 
-        # 十連保底：最後一抽必出SR以上
+        # 十連保底 SR
         if last_pull:
-            weights[1] += weights[0]  # SR機率增加R的機率
-            weights[0] = 0  # R機率設為0
+            r_weight = weights[0]
+            weights[0] = 0
+            weights[1] += r_weight # 簡化：R的機率全給SR
 
-        # 執行抽卡
+        # 權重正規化 (確保總和為100)
+        active_weights = [w for w in weights if w > 0]
+        if active_weights:
+            current_total_weight = sum(active_weights)
+            if abs(current_total_weight - 100.0) > 1e-5 : # 允許微小誤差
+                if current_total_weight > 0: # 避免除以零
+                    factor = 100.0 / current_total_weight
+                    weights = [w * factor for w in weights]
+                else: # 理論上不應發生，所有權重為0
+                    weights[0] = 100.0 # 強制設為 R
+        else: # 所有權重都為0，強制設為 R
+             weights[0] = 100.0
+
+        # 抽卡
         try:
-            categories = ["R", "SR", "SSR", "Pickup_SR", "Pickup_SSR", "Pickup_Fes", "Limited_Other", "Fes_Other"]
-            rarity_result = random.choices(categories, weights)[0]
-            
-            result = {}
-            
-            if rarity_result == "R" and pool_r:
-                result = random.choice(pool_r).copy()
-                result["rarity"] = "R"
-            elif rarity_result == "SR" and pool_sr:
-                result = random.choice(pool_sr).copy()
-                result["rarity"] = "SR"
-            elif rarity_result == "SSR" and pool_ssr:
-                result = random.choice(pool_ssr).copy()
-                result["rarity"] = "SSR"
-            elif rarity_result == "Pickup_SR" and pickup_sr:
-                result = random.choice(pickup_sr).copy()
-                result["rarity"] = "Pickup_SR"
-            elif rarity_result == "Pickup_SSR" and pickup_ssr:
-                result = random.choice(pickup_ssr).copy()
-                result["rarity"] = "Pickup_SSR"
-            elif rarity_result == "Pickup_Fes" and pickup_fes:
-                result = random.choice(pickup_fes).copy()
-                result["rarity"] = "Pickup_Fes"
-            elif rarity_result == "Limited_Other" and pool_limited:
-                result = random.choice(pool_limited).copy()
-                result["rarity"] = "Limited_Other"
-            elif rarity_result == "Fes_Other" and pool_fes:
-                result = random.choice(pool_fes).copy()
-                result["rarity"] = "Fes_Other"
-            else:
-                # 容錯處理：如果選中的池子是空的，回退到R池
-                if pool_r:
-                    result = random.choice(pool_r).copy()
-                    result["rarity"] = "R"
-                else:
-                    result = {"id": 0, "name": "Null", "rarity": "Error"}
+            valid_categories_weights = {cat: weights[i] for i, cat in enumerate(result_categories) if weights[i] > 0}
+            if not valid_categories_weights:
+                raise IndexError("No valid categories with positive weights.")
 
-            result["server"] = server
-            return result
+            chosen_category = random.choices(
+                list(valid_categories_weights.keys()), 
+                list(valid_categories_weights.values())
+            )[0]
             
-        except (IndexError, ValueError) as e:
-            print(f"抽卡邏輯錯誤: {e}")
-            return {"id": 0, "name": "Null", "rarity": "Error", "server": server}
-    
+            pulled_char_info = {} # 存放抽出的角色原始資訊 (id, name)
+
+            if chosen_category == "R" and pool_r:
+                pulled_char_info = random.choice(pool_r)
+            elif chosen_category == "SR" and pool_sr:
+                pulled_char_info = random.choice(pool_sr)
+            elif chosen_category == "SSR_Perm" and pool_ssr_permanent:
+                pulled_char_info = random.choice(pool_ssr_permanent)
+            elif chosen_category == "SSR_PickUp" and current_pickup_char and current_pickup_char["rarity"] == "SSR" and gacha_type != "FesGacha" and gacha_type != "LimitedGacha": #常駐UP
+                pulled_char_info = current_pickup_char
+            elif chosen_category == "SSR_PickUp" and current_pickup_char and current_pickup_char["rarity"] == "SSR" and gacha_type == "LimitedGacha": #限定UP
+                pulled_char_info = current_pickup_char
+            elif chosen_category == "SSR_Lim_Norm_Other" and pool_concurrent_limited_others: # 同期其他限定UP
+                pulled_char_info = random.choice(pool_concurrent_limited_others)
+            elif chosen_category == "SSR_Fes_PickUp" and current_pickup_char and gacha_type == "FesGacha":
+                pulled_char_info = current_pickup_char
+            elif chosen_category == "SSR_Fes_Other" and pool_limited_fes:
+                pulled_char_info = random.choice(pool_limited_fes)
+            
+            # Fallback
+            if not pulled_char_info:
+                 if pool_r:
+                    pulled_char_info = random.choice(pool_r)
+                    chosen_category = "R" # 更新抽出的類別
+                 else:
+                    return {"id": 0, "name": "資料錯誤", "rarity": "Error", "server": server}
+
+            final_rarity_display = chosen_category # 用於顯示的稀有度類別
+            if "PickUp" in chosen_category or "PickUp" in final_rarity_display: # 讓圖片顯示 pickup
+                 final_rarity_display = "Pickup_" + ("SR" if pulled_char_info.get("rarity")=="SR" else "SSR") if "PickUp" in chosen_category else chosen_category
+            elif "Fes_PickUp" in chosen_category :
+                 final_rarity_display = "Pickup_Fes"
+            elif "Fes_Other" in chosen_category:
+                 final_rarity_display = "SSR" # Fes其他角色當作普通SSR顯示，但它是限定
+            elif "SSR" in chosen_category: # SSR_Perm or SSR_Lim_Norm_Other
+                 final_rarity_display = "SSR"
+
+
+            return {
+                "id": pulled_char_info["id"],
+                "name": pulled_char_info["name"],
+                "rarity": final_rarity_display, # 用於 create_single_image 判斷
+                "server": server
+            }
+        except IndexError as e:
+            print(f"抽卡錯誤 (IndexError): {e}, Weights: {weights}")
+            if pool_r: fallback = random.choice(pool_r); return {"id": fallback["id"], "name": fallback["name"], "rarity": "R", "server": server}
+            return {"id": 0, "name": "抽卡機大故障", "rarity": "Error", "server": server}
+        except Exception as e:
+            print(f"抽卡時發生未知錯誤: {e}")
+            if pool_r: fallback = random.choice(pool_r); return {"id": fallback["id"], "name": fallback["name"], "rarity": "R", "server": server}
+            return {"id": 0, "name": "系統維護中", "rarity": "Error", "server": server}
+
     def create_single_image(self, result: dict):
-        """根據抽卡結果生成單張角色頭像圖。"""
+        # ... (此函式邏輯根據 result["rarity"] 判斷 PICKUP_ICON，基本不變) ...
         base_char_image = PIL.Image.new("RGBA", (160, 160), (0, 0, 0, 0))
-        
         try:
             char_img_path = IMAGE_DIR / f"{result['id']}.png"
             with PIL.Image.open(char_img_path) as char_pil_img:
@@ -223,36 +223,39 @@ class Gacha(commands.Cog):
         except Exception as e:
             print(f"載入學生圖片 {result['id']}.png 時發生錯誤: {e}")
 
-        rarity = result["rarity"]
-        is_pickup = rarity.startswith("Pickup_")
+        rarity_display = result["rarity"] # pull_logic 返回的詳細稀有度
         
-        if rarity == "R":
+        is_pickup = "Pickup" in rarity_display # 例如 "Pickup_SR", "Pickup_SSR", "Pickup_Fes"
+
+        if rarity_display == "R":
             base_char_image.alpha_composite(BORDER)
             base_char_image.alpha_composite(STAR_1)
-        elif rarity in ("SR", "Pickup_SR"):
+        elif rarity_display == "SR" or rarity_display == "Pickup_SR":
             base_char_image.alpha_composite(YELLOW_GLOW)
             base_char_image.alpha_composite(BORDER)
             base_char_image.alpha_composite(STAR_2)
             if is_pickup:
-                base_char_image.alpha_composite(PICKUP)
-        elif rarity in ("SSR", "Pickup_SSR", "Pickup_Fes", "Limited_Other", "Fes_Other"):
+                base_char_image.alpha_composite(PICKUP_ICON)
+        elif rarity_display in ("SSR", "Pickup_SSR", "Pickup_Fes", "SSR_Lim_Norm_Other", "SSR_Fes_Other"): # 所有三星都用紫色光
             base_char_image.alpha_composite(PURPLE_GLOW)
             base_char_image.alpha_composite(BORDER)
             base_char_image.alpha_composite(STAR_3)
-            if is_pickup:
-                base_char_image.alpha_composite(PICKUP)
-        
+            if is_pickup: # Pickup_SSR 或 Pickup_Fes
+                base_char_image.alpha_composite(PICKUP_ICON)
+        elif rarity_display == "Error":
+             pass
         return base_char_image
+        
+    # ... generate_gacha_image, 斜線指令 gacha, GachaDropdown, GachaButton, GachaView 保持不變 ...
+    # 注意：GachaDropdown 的 label 可能需要調整以更好地區分卡池類型和UP角。
 
     def generate_gacha_image(self, results: list):
-        """將多張角色頭像圖合成一張大的結果圖。"""
         char_images = [self.create_single_image(res) for res in results]
-        
         image_count = len(char_images)
         cols = 5
         rows = math.ceil(image_count / cols)
-        img_width, img_height = 120, 140
-        padding = 10
+        img_width, img_height = 120, 140 
+        padding = 10 
 
         if image_count > 1:
             canvas_width = cols * img_width + padding * 2
@@ -262,12 +265,11 @@ class Gacha(commands.Cog):
                 x_offset = padding + (i % cols * img_width) + (img_width - 160) // 2
                 y_offset = padding + (i // cols * img_height) + (img_height - 160) // 2
                 base_image.alpha_composite(img, (x_offset, y_offset))
-        elif image_count == 1:
-            base_image = PIL.Image.new("RGBA", (200, 200), (194, 229, 245, 255)) 
-            base_image.alpha_composite(char_images[0], ((200-160)//2, (200-160)//2))
-        else:
+        elif image_count == 1 :
             base_image = PIL.Image.new("RGBA", (200, 200), (194, 229, 245, 255))
-
+            base_image.alpha_composite(char_images[0], ( (200-160)//2, (200-160)//2) )
+        else: 
+            base_image = PIL.Image.new("RGBA", (200,200), (194,229,245,255))
         base_image.save("result.png")
 
     @app_commands.command(name="gacha", description="模擬抽卡")
@@ -277,10 +279,8 @@ class Gacha(commands.Cog):
         app_commands.Choice(name="十抽", value="ten")
     ])
     async def gacha(self, interaction: discord.Interaction, mode: app_commands.Choice[str]):
-        """主斜線指令，顯示卡池選擇介面。"""
         view = GachaView(cog=self, mode=mode.value)
         await interaction.response.send_message("請選擇您要進行招募的卡池：", view=view, ephemeral=True)
-
 
 class GachaDropdown(discord.ui.Select):
     def __init__(self, cog: Gacha, mode: str):
