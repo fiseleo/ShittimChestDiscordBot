@@ -1,7 +1,7 @@
 from discord.ext import commands
 import discord
 from pathlib import Path
-
+from .utils import get_gacha_data
 # --- 優化：權限管理 ---
 
 ADMIN_ROLES_PATH = Path(__file__).parent.parent / "config/admin_roles.txt"
@@ -76,7 +76,40 @@ class Admin(commands.Cog):
         synced = await self.bot.tree.sync()
         await ctx.send(f"✅ 已同步 {len(synced)} 個全域指令。")
 
-    # --- Raid 資料重置指令已被完全移除 ---
+
+
+    @commands.group(name="simtime", invoke_without_command=True, description="管理模擬時間以測試卡池。")
+    @is_bot_admin() # 使用您已有的權限檢查器
+    async def simtime(self, ctx: commands.Context):
+        """顯示當前模擬時間或說明。"""
+        current_sim_time = get_gacha_data.SIMULATED_TIME_UTC9
+        if current_sim_time:
+            await ctx.send(f"ℹ️ 目前模擬時間 (UTC+9): `{current_sim_time.strftime('%Y-%m-%d %H:%M:%S')}`\n"
+                           f"使用 `!simtime set YYYY MM DD [HH MM SS]` 設定，或 `!simtime clear` 清除。")
+        else:
+            await ctx.send("ℹ️ 目前未使用模擬時間，卡池篩選將基於實際當前時間。\n"
+                           f"使用 `!simtime set YYYY MM DD [HH MM SS]` 設定，或 `!simtime clear` 清除。")
+
+    @simtime.command(name="set", description="設定模擬時間 (UTC+9)。例如: !simtime set 2025 6 1 15 30 0")
+    @is_bot_admin()
+    async def simtime_set(self, ctx: commands.Context, year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: int = 0):
+        """設定模擬日期和時間 (UTC+9)。時間部分可選。"""
+        success, new_time = get_gacha_data.set_simulated_time(year, month, day, hour, minute, second)
+        if success and new_time:
+            await ctx.send(f"✅ 模擬時間已成功設定為 (UTC+9): `{new_time.strftime('%Y-%m-%d %H:%M:%S')}`\n"
+                           f"下次執行 `!update` 或自動更新時將使用此時間。")
+        elif success and not new_time: # 代表清除成功
+             await ctx.send("✅ 模擬時間已清除。")
+        else:
+            await ctx.send(f"❌ 設定模擬時間失敗。請檢查日期時間格式是否正確。")
+
+    @simtime.command(name="clear", description="清除模擬時間，恢復使用實際當前時間。")
+    @is_bot_admin()
+    async def simtime_clear(self, ctx: commands.Context):
+        """清除模擬時間。"""
+        get_gacha_data.set_simulated_time() # 不帶參數即清除
+        await ctx.send("✅ 模擬時間已清除。下次更新將使用實際當前時間。")
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Admin(bot))

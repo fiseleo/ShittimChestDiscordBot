@@ -12,7 +12,11 @@ pwd = Path(__file__).parent.parent
 DB_PATH = pwd / "../gacha_data/gacha_data.db"
 IMAGE_DIR = pwd / "../gacha_data/images"
 UTC_PLUS_9 = pytz.timezone('Etc/GMT-9')
-
+# --- 模擬時間設定 ---
+# 如果 SIMULATED_TIME_UTC9 被設定為一個 datetime 物件，則 update() 會使用這個時間
+# 否則，會使用實際的當前 UTC+9 時間
+# 例如：SIMULATED_TIME_UTC9 = UTC_PLUS_9.localize(datetime.datetime(2025, 6, 1, 12, 0, 0))
+SIMULATED_TIME_UTC9 = None # 預設為 None，即不使用模擬時間
 
 def initialize_database():
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -40,6 +44,26 @@ def initialize_database():
     )""")
     con.commit()
     con.close()
+
+
+def set_simulated_time(year=None, month=None, day=None, hour=0, minute=0, second=0):
+    """設定全域的模擬時間 (UTC+9)"""
+    global SIMULATED_TIME_UTC9
+    if year and month and day:
+        try:
+            SIMULATED_TIME_UTC9 = UTC_PLUS_9.localize(datetime.datetime(year, month, day, hour, minute, second))
+            print(f"模擬時間已設定為 (UTC+9): {SIMULATED_TIME_UTC9.strftime('%Y-%m-%d %H:%M:%S')}")
+            return True, SIMULATED_TIME_UTC9
+        except Exception as e:
+            print(f"設定模擬時間失敗: {e}")
+            SIMULATED_TIME_UTC9 = None 
+            return False, None
+    else:
+        SIMULATED_TIME_UTC9 = None
+        print("模擬時間已清除，將使用實際當前時間。")
+        return True, None
+    
+    
 
 
 def fetch_url(url, is_json=True):
@@ -93,14 +117,17 @@ def process_student_data(region_data, region_key_for_students_dict, students_dic
 # --- 主要更新函式 ---
 def update():
     print("<<<<< 開始更新轉蛋資料 >>>>>")
-    initialize_database() # 每次更新都確保資料表結構是最新的
+    # 注意：initialize_database() 會在每次 update 時執行，並重建卡池表。
+    # 如果您希望保留卡池歷史或進行更複雜的資料庫遷移，這裡可能需要調整。
+    # 目前為了測試方便，每次都重建是可行的。
+    initialize_database()
 
     api_urls = {
         "char_jp": "https://schaledb.com/data/jp/students.min.json",
         "char_tw": "https://schaledb.com/data/tw/students.min.json",
         "char_en": "https://schaledb.com/data/en/students.min.json",
-        "banner_jp": "https://raw.githubusercontent.com/electricgoat/ba-data/refs/heads/jp/DB/ShopRecruitExcelTable.json", 
-        "banner_gl": "https://raw.githubusercontent.com/electricgoat/ba-data/refs/heads/global/Excel/ShopRecruitExcelTable.json" 
+        "banner_jp": "https://raw.githubusercontent.com/electricgoat/ba-data/refs/heads/jp/DB/ShopRecruitExcelTable.json",
+        "banner_gl": "https://raw.githubusercontent.com/electricgoat/ba-data/refs/heads/global/Excel/ShopRecruitExcelTable.json"
     }
     
     api_data = {}
@@ -147,8 +174,15 @@ def update():
     else:
         print("所有學生頭像均已存在，無需下載。")
 
-    now_utc9 = datetime.datetime.now(UTC_PLUS_9)
+    # --- 卡池資料處理邏輯修改：使用模擬時間 ---
+    global SIMULATED_TIME_UTC9 # 引用全域模擬時間變數
+    current_processing_time = SIMULATED_TIME_UTC9 if SIMULATED_TIME_UTC9 else datetime.datetime.now(UTC_PLUS_9)
+    if SIMULATED_TIME_UTC9:
+        print(f"注意：正在使用模擬時間 (UTC+9) 進行卡池篩選: {current_processing_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    # --- 修改結束 ---
+    
     VALID_BANNER_TYPES = ["PickupGacha", "NormalGacha", "LimitedGacha", "FesGacha"]
+
     def process_banner_data(raw_banner_json_data, banner_table_name):
         if not isinstance(raw_banner_json_data, dict):
             print(f"警告：{banner_table_name} 的卡池資料格式非預期的字典，跳過處理。實際類型: {type(raw_banner_json_data)}")
@@ -180,25 +214,22 @@ def update():
                 sale_from = UTC_PLUS_9.localize(datetime.datetime.strptime(sale_from_str, "%Y-%m-%d %H:%M:%S"))
                 sale_to = UTC_PLUS_9.localize(datetime.datetime.strptime(sale_to_str, "%Y-%m-%d %H:%M:%S"))
                 
-                if sale_from <= now_utc9 <= sale_to:
+                # 使用 current_processing_time 進行比較
+                if sale_from <= current_processing_time <= sale_to:
                     info_char_ids = banner_item.get("InfoCharacterId", [])
-                    
-                    rateup_id = None # 預設為 None
-                    if category_type != "NormalGacha" and info_char_ids: 
-                        rateup_id = info_char_ids[0] 
-                    
+                    rateup_id = info_char_ids[0] if category_type != "NormalGacha" and info_char_ids else None
                     active_banners_to_insert.append((category_type, rateup_id))
             except ValueError as ve:
                 print(f"解析卡池時間失敗: {banner_item.get('Id')}, From: {sale_from_str}, To: {sale_to_str}. 錯誤: {ve}")
             except Exception as e:
                 print(f"處理卡池 {banner_item.get('Id')} 時發生未知錯誤: {e}")
 
-        cur.execute(f"DELETE FROM {banner_table_name}") # 先清空
+        cur.execute(f"DELETE FROM {banner_table_name}")
         if active_banners_to_insert:
             cur.executemany(f"INSERT INTO {banner_table_name} (type, rateup_id) VALUES (?, ?)", active_banners_to_insert)
-            print(f"在 {banner_table_name} 中找到並寫入 {len(active_banners_to_insert)} 個活躍卡池。")
+            print(f"在 {banner_table_name} 中找到並寫入 {len(active_banners_to_insert)} 個活躍卡池 (基於時間: {current_processing_time.strftime('%Y-%m-%d %H:%M:%S')})。")
         else:
-            print(f"在 {banner_table_name} 中沒有找到當前活躍的卡池。")
+            print(f"在 {banner_table_name} 中沒有找到當前活躍的卡池 (基於時間: {current_processing_time.strftime('%Y-%m-%d %H:%M:%S')})。")
 
     process_banner_data(api_data.get("banner_jp"), "current_banner_jp")
     process_banner_data(api_data.get("banner_gl"), "current_banner_gl")

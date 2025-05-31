@@ -338,12 +338,6 @@ class GachaDropdown(discord.ui.Select):
         
         self.cog.generate_gacha_image(results)
         
-        # 生成結果統計
-        rarity_counts = {}
-        for result in results:
-            rarity = result["rarity"]
-            rarity_counts[rarity] = rarity_counts.get(rarity, 0) + 1
-        
         # 生成embed
         banner_display_name = self._get_banner_display_name(
             (self.cog.banners_gl if server_str == "global" else self.cog.banners_jp)[choice]
@@ -355,25 +349,7 @@ class GachaDropdown(discord.ui.Select):
             color=discord.Color.blue()
         )
         
-        # 添加稀有度統計
-        if len(results) > 1:
-            stats_text = []
-            for rarity, count in rarity_counts.items():
-                rarity_display = {
-                    "R": "⚪ R級",
-                    "SR": "🟡 SR級", 
-                    "Pickup_SR": "🟡 SR級 (UP)",
-                    "SSR": "🟣 SSR級",
-                    "Pickup_SSR": "🟣 SSR級 (UP)",
-                    "Pickup_Fes": "🟣 SSR級 (Fes UP)",
-                    "Limited_Other": "🟣 SSR級 (限定)",
-                    "Fes_Other": "🟣 SSR級 (Fes)"
-                }.get(rarity, rarity)
-                stats_text.append(f"{rarity_display}: {count}")
-            
-            if stats_text:
-                embed.add_field(name="📊 本次招募統計", value="\n".join(stats_text), inline=False)
-
+        
         try:
             file = discord.File("result.png", filename="result.png")
             embed.set_image(url="attachment://result.png")
@@ -404,11 +380,7 @@ class GachaButton(discord.ui.Button):
             
         self.cog.generate_gacha_image(results)
 
-        # Generating result statistics (same logic as dropdown)
-        rarity_counts = {}
-        for result in results:
-            rarity = result["rarity"]
-            rarity_counts[rarity] = rarity_counts.get(rarity, 0) + 1
+        
 
         current_banner_list = self.cog.banners_gl if self.server == "global" else self.cog.banners_jp
         banner = current_banner_list[self.choice]
@@ -424,24 +396,7 @@ class GachaButton(discord.ui.Button):
             color=discord.Color.blue()
         )
         
-        # Add rarity statistics
-        if len(results) > 1:
-            stats_text = []
-            for rarity, count in rarity_counts.items():
-                rarity_display = {
-                    "R": "⚪ R級",
-                    "SR": "🟡 SR級", 
-                    "Pickup_SR": "🟡 SR級 (UP)",
-                    "SSR": "🟣 SSR級",
-                    "Pickup_SSR": "🟣 SSR級 (UP)",
-                    "Pickup_Fes": "🟣 SSR級 (Fes UP)",
-                    "Limited_Other": "🟣 SSR級 (限定)",
-                    "Fes_Other": "🟣 SSR級 (Fes)"
-                }.get(rarity, rarity)
-                stats_text.append(f"{rarity_display}: {count}")
-            
-            if stats_text:
-                embed.add_field(name="📊 本次招募統計", value="\n".join(stats_text), inline=False)
+        
 
         try:
             file = discord.File("result.png", filename="result.png")
