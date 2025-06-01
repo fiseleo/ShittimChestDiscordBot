@@ -24,6 +24,9 @@ try:
     PURPLE_GLOW = PIL.Image.open(ASSETS_DIR / "purple_glow.png")
     YELLOW_GLOW = PIL.Image.open(ASSETS_DIR / "yellow_glow.png")
     BORDER = PIL.Image.open(ASSETS_DIR / "border.png")
+    PURPLE_BORDER = PIL.Image.open(ASSETS_DIR / "purple_border.png")
+    YELLOW_BORDER = PIL.Image.open(ASSETS_DIR / "yellow_border.png")
+    BLUE_BORDER = PIL.Image.open(ASSETS_DIR / "blue_border.png")
 
 
     # 縮小 MASK 圖標尺寸
@@ -239,15 +242,19 @@ class Gacha(commands.Cog):
                 new_height = int(original_height * 0.875)
                 char_pil_img = char_pil_img.resize((new_width, new_height), PIL.Image.Resampling.LANCZOS)
                 char_pil_img = PIL.ImageChops.multiply(char_pil_img, MASK)
-
+                rarity_display = result["rarity"] 
+                if rarity_display == "R":
+                    base_char_image.alpha_composite(BLUE_BORDER)
+                elif rarity_display == "SR":
+                    base_char_image.alpha_composite(YELLOW_BORDER)
+                elif rarity_display in ("SSR", "Pickup_SSR", "Pickup_Fes", "SSR_Lim_Norm_Other", "SSR_Fes_Other"):
+                    base_char_image.alpha_composite(PURPLE_BORDER)
                 base_char_image.alpha_composite(char_pil_img, (30, 20))
         except FileNotFoundError:
             print(f"警告：找不到學生圖片 {result['id']}.png for {result['name']}")
         except Exception as e:
             print(f"載入學生圖片 {result['id']}.png 時發生錯誤: {e}")
 
-        rarity_display = result["rarity"] 
-        
         is_pickup = "Pickup" in rarity_display # 例如 "Pickup_SR", "Pickup_SSR", "Pickup_Fes"
         # 這裡獲取BORDER的尺寸以計算居中位置
         border_width, border_height = BORDER.size
