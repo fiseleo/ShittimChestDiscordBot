@@ -41,7 +41,7 @@ def initialize_database():
         rarity TEXT NOT NULL,
         banner_name TEXT NOT NULL,
         server TEXT NOT NULL,
-        pull_time DATETIME DEFAULT CURRENT_TIMESTAMP
+        pull_time TEXT NOT NULL
     )""")
 
     con.commit()

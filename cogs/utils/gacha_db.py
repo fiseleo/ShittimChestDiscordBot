@@ -2,9 +2,12 @@
 
 from pathlib import Path
 import sqlite3
-
+import datetime 
+import pytz     
 pwd = Path(__file__).parent
 DB_PATH = pwd / "../../gacha_data/gacha_data.db" # 確保路徑是正確的
+
+TARGET_TIMEZONE_FOR_PULL_TIME = pytz.timezone('Asia/Taipei')
 
 def get_character_pools(server: str) -> dict:
     """從資料庫獲取指定伺服器的所有角色卡池。"""
@@ -88,6 +91,8 @@ def record_pulls(user_id: int, server: str, banner_name: str, pull_results: list
     cur = con.cursor()
     
     records_to_insert = []
+    current_time_with_tz = datetime.datetime.now(TARGET_TIMEZONE_FOR_PULL_TIME)
+    formatted_pull_time = current_time_with_tz.strftime('%Y-%m-%d %H:%M:%S')
     for result in pull_results:
         clean_rarity = result["rarity"].split('_')[-1]
         
@@ -100,12 +105,13 @@ def record_pulls(user_id: int, server: str, banner_name: str, pull_results: list
             result["name"],
             clean_rarity,
             banner_name,
-            server
+            server,
+            formatted_pull_time
         ))
     
     if records_to_insert:
         cur.executemany(
-            "INSERT INTO gacha_history (user_id, char_id, char_name, rarity, banner_name, server) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO gacha_history (user_id, char_id, char_name, rarity, banner_name, server, pull_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
             records_to_insert
         )
         con.commit()
