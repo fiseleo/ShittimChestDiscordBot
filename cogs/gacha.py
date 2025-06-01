@@ -6,21 +6,30 @@ import random
 import math
 import PIL.Image
 import PIL.ImageChops
+
+
 from .utils import gacha_db # 使用我們更新後的 gacha_db
 
 ASSETS_DIR = Path(__file__).parent.parent / "assets"
 IMAGE_DIR = Path(__file__).parent.parent / "gacha_data" / "images"
 
 try:
-    MASK = PIL.Image.open(ASSETS_DIR / "mask.png")
-    BORDER = PIL.Image.open(ASSETS_DIR / "border.png")
+    
     STAR_1 = PIL.Image.open(ASSETS_DIR / "star.png")
     STAR_2 = PIL.Image.open(ASSETS_DIR / "two_star.png")
     STAR_3 = PIL.Image.open(ASSETS_DIR / "three_star.png")
+    MASK = PIL.Image.open(ASSETS_DIR / "mask.png")
+    BORDER = PIL.Image.open(ASSETS_DIR / "border.png")
+    BACKGROUND = PIL.Image.open(ASSETS_DIR / "BackGround.png")
     PURPLE_GLOW = PIL.Image.open(ASSETS_DIR / "purple_glow.png")
     YELLOW_GLOW = PIL.Image.open(ASSETS_DIR / "yellow_glow.png")
-    PICKUP_ICON = PIL.Image.open(ASSETS_DIR / "Pickup.png")
-    BACKGROUND = PIL.Image.open(ASSETS_DIR / "BackGround.png")
+    
+    # 縮小 Pickup 圖標尺寸
+    original_Pickup= PIL.Image.open(ASSETS_DIR / "Pickup.png")
+    original_Pickup_width, original_Pickup_height = original_Pickup.size
+    new_width = int(original_Pickup_width * 0.35)
+    new_height = int(original_Pickup_height * 0.35)
+    PICKUP_ICON = original_Pickup.resize((new_width, new_height), PIL.Image.Resampling.LANCZOS)
 except FileNotFoundError as e:
     raise FileNotFoundError(f"缺少核心素材圖片，請檢查 assets 資料夾: {e}")
 
@@ -209,46 +218,51 @@ class Gacha(commands.Cog):
             print(f"抽卡時發生未知錯誤: {e}")
             if pool_r: fallback = random.choice(pool_r); return {"id": fallback["id"], "name": fallback["name"], "rarity": "R", "server": server}
             return {"id": 0, "name": "系統維護中", "rarity": "Error", "server": server}
-
+        
     def create_single_image(self, result: dict):
-        # ... (此函式邏輯根據 result["rarity"] 判斷 PICKUP_ICON，基本不變) ...
         base_char_image = PIL.Image.new("RGBA", (160, 160), (0, 0, 0, 0))
         try:
             char_img_path = IMAGE_DIR / f"{result['id']}.png"
             with PIL.Image.open(char_img_path) as char_pil_img:
                 char_pil_img = char_pil_img.convert("RGBA")
+                original_width, original_height = char_pil_img.size
+                new_width = int(original_width * 1)
+                new_height = int(original_height * 0.85)
+                char_pil_img = char_pil_img.resize((new_width, new_height), PIL.Image.Resampling.LANCZOS)
                 char_pil_img = PIL.ImageChops.multiply(char_pil_img, MASK)
+
                 base_char_image.alpha_composite(char_pil_img, (20, 20))
         except FileNotFoundError:
             print(f"警告：找不到學生圖片 {result['id']}.png for {result['name']}")
         except Exception as e:
             print(f"載入學生圖片 {result['id']}.png 時發生錯誤: {e}")
 
-        rarity_display = result["rarity"] # pull_logic 返回的詳細稀有度
+        rarity_display = result["rarity"] 
         
         is_pickup = "Pickup" in rarity_display # 例如 "Pickup_SR", "Pickup_SSR", "Pickup_Fes"
-
+        # 這裡獲取BORDER的尺寸以計算居中位置
+        border_width, border_height = BORDER.size
+        border_x = (160 - border_width) // 2
+        border_y = (160 - border_height) // 2
         if rarity_display == "R":
-            base_char_image.alpha_composite(BORDER)
+            base_char_image.alpha_composite(BORDER, (border_x, border_y))
             base_char_image.alpha_composite(STAR_1)
         elif rarity_display == "SR" or rarity_display == "Pickup_SR":
             base_char_image.alpha_composite(YELLOW_GLOW)
-            base_char_image.alpha_composite(BORDER)
+            base_char_image.alpha_composite(BORDER, (border_x, border_y))
             base_char_image.alpha_composite(STAR_2)
             if is_pickup:
-                base_char_image.alpha_composite(PICKUP_ICON)
-        elif rarity_display in ("SSR", "Pickup_SSR", "Pickup_Fes", "SSR_Lim_Norm_Other", "SSR_Fes_Other"): # 所有三星都用紫色光
+                base_char_image.alpha_composite(PICKUP_ICON , (30, 10))
+        elif rarity_display in ("SSR", "Pickup_SSR", "Pickup_Fes", "SSR_Lim_Norm_Other", "SSR_Fes_Other"):
             base_char_image.alpha_composite(PURPLE_GLOW)
-            base_char_image.alpha_composite(BORDER)
+            base_char_image.alpha_composite(BORDER, (border_x, border_y))
             base_char_image.alpha_composite(STAR_3)
-            if is_pickup: # Pickup_SSR 或 Pickup_Fes
-                base_char_image.alpha_composite(PICKUP_ICON)
+            if is_pickup:
+                base_char_image.alpha_composite(PICKUP_ICON , (30, 10))
         elif rarity_display == "Error":
-             pass
+            pass
         return base_char_image
         
-    # ... generate_gacha_image, 斜線指令 gacha, GachaDropdown, GachaButton, GachaView 保持不變 ...
-    # 注意：GachaDropdown 的 label 可能需要調整以更好地區分卡池類型和UP角。
 
     def generate_gacha_image(self, results: list):
         char_images = [self.create_single_image(res) for res in results]
