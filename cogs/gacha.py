@@ -19,7 +19,8 @@ try:
     STAR_3 = PIL.Image.open(ASSETS_DIR / "three_star.png")
     PURPLE_GLOW = PIL.Image.open(ASSETS_DIR / "purple_glow.png")
     YELLOW_GLOW = PIL.Image.open(ASSETS_DIR / "yellow_glow.png")
-    PICKUP_ICON = PIL.Image.open(ASSETS_DIR / "pickup.png")
+    PICKUP_ICON = PIL.Image.open(ASSETS_DIR / "Pickup.png")
+    BACKGROUND = PIL.Image.open(ASSETS_DIR / "BackGround.png")
 except FileNotFoundError as e:
     raise FileNotFoundError(f"缺少核心素材圖片，請檢查 assets 資料夾: {e}")
 
@@ -252,25 +253,52 @@ class Gacha(commands.Cog):
     def generate_gacha_image(self, results: list):
         char_images = [self.create_single_image(res) for res in results]
         image_count = len(char_images)
-        cols = 5
-        rows = math.ceil(image_count / cols)
-        img_width, img_height = 120, 140 
-        padding = 10 
+        
+        # 預先載入背景並確保是 RGBA，這樣可以獲取其原始尺寸
+        # 我們將創建一個以此背景為基礎的新圖像副本進行操作
+        final_bg_image = BACKGROUND.convert("RGBA").copy() # 使用 .copy() 避免修改原始 BACKGROUND 物件
+        bg_width, bg_height = final_bg_image.size # 背景的實際寬高 (1024x512)
 
-        if image_count > 1:
-            canvas_width = cols * img_width + padding * 2
-            canvas_height = rows * img_height + padding * 2
-            base_image = PIL.Image.new("RGBA", (canvas_width, canvas_height), (194, 229, 245, 255))
-            for i, img in enumerate(char_images):
-                x_offset = padding + (i % cols * img_width) + (img_width - 160) // 2
-                y_offset = padding + (i // cols * img_height) + (img_height - 160) // 2
-                base_image.alpha_composite(img, (x_offset, y_offset))
-        elif image_count == 1 :
-            base_image = PIL.Image.new("RGBA", (200, 200), (194, 229, 245, 255))
-            base_image.alpha_composite(char_images[0], ( (200-160)//2, (200-160)//2) )
-        else: 
-            base_image = PIL.Image.new("RGBA", (200,200), (194,229,245,255))
-        base_image.save("result.png")
+        if image_count > 1: # 對於十連抽等多次抽卡
+            cols = 5
+            rows = math.ceil(image_count / cols)
+            img_width, img_height = 120, 140  # 每個小格子的預期顯示尺寸
+            padding = 10
+
+            # 計算卡片網格本身的寬高
+            grid_width = cols * img_width + padding * 2
+            grid_height = rows * img_height + padding * 2
+
+            # 創建一個透明的畫布來繪製卡片網格
+            card_grid_image = PIL.Image.new("RGBA", (grid_width, grid_height), (0, 0, 0, 0))
+
+            for i, img in enumerate(char_images): # img 是 160x160
+                # 計算 img 在 card_grid_image 上的位置 (使其在 120x140 的格子內居中顯示部分)
+                x_on_grid = padding + (i % cols * img_width) + (img_width - 160) // 2
+                y_on_grid = padding + (i // cols * img_height) + (img_height - 160) // 2
+                card_grid_image.alpha_composite(img, (x_on_grid, y_on_grid))
+            
+            # 計算卡片網格在最終背景上的居中位置
+            grid_x_on_bg = (bg_width - grid_width) // 2
+            grid_y_on_bg = (bg_height - grid_height) // 2
+            
+            # 將繪製好的卡片網格貼到背景圖的中央
+            final_bg_image.alpha_composite(card_grid_image, (grid_x_on_bg, grid_y_on_bg))
+
+        elif image_count == 1 : # 對於單抽
+            single_card_image = char_images[0] # 這是 160x160 的卡片
+            card_width, card_height = single_card_image.size # 應該是 (160, 160)
+            
+            # 計算單張卡片在背景圖上的居中位置
+            card_x_on_bg = (bg_width - card_width) // 2
+            card_y_on_bg = (bg_height - card_height) // 2
+            
+            # 將單張卡片貼到背景圖的中央
+            final_bg_image.alpha_composite(single_card_image, (card_x_on_bg, card_y_on_bg))
+            
+        # else: 如果 image_count == 0，final_bg_image 已經是背景圖了，無需額外操作
+
+        final_bg_image.save("result.png")
 
     @app_commands.command(name="gacha", description="模擬抽卡")
     @app_commands.describe(mode="選擇一次招募的數量")
