@@ -1,3 +1,5 @@
+# cogs/utils/gacha_db.py
+
 from pathlib import Path
 import sqlite3
 
@@ -79,3 +81,50 @@ def get_current_banners(server: str) -> list:
         
     con.close()
     return banners
+
+def record_pulls(user_id: int, server: str, banner_name: str, pull_results: list):
+    """將抽卡結果記錄到資料庫。"""
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    
+    records_to_insert = []
+    for result in pull_results:
+        clean_rarity = result["rarity"].split('_')[-1]
+        
+        if "id" not in result or "name" not in result:
+            continue
+
+        records_to_insert.append((
+            user_id,
+            result["id"],
+            result["name"],
+            clean_rarity,
+            banner_name,
+            server
+        ))
+    
+    if records_to_insert:
+        cur.executemany(
+            "INSERT INTO gacha_history (user_id, char_id, char_name, rarity, banner_name, server) VALUES (?, ?, ?, ?, ?, ?)",
+            records_to_insert
+        )
+        con.commit()
+    
+    con.close()
+
+# --- 修改後的函式 ---
+def get_user_history_for_banner(user_id: int, banner_name: str) -> list:
+    """從資料庫獲取指定用戶在特定卡池的抽卡歷史記錄。"""
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    cur = con.cursor()
+    
+    cur.execute(
+        "SELECT * FROM gacha_history WHERE user_id = ? AND banner_name = ? ORDER BY pull_time DESC",
+        (user_id, banner_name)
+    )
+    history = cur.fetchall()
+    
+    con.close()
+    return history
+# --- 修改結束 ---

@@ -1,3 +1,5 @@
+# cogs/gacha.py
+import datetime
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -275,50 +277,34 @@ class Gacha(commands.Cog):
         char_images = [self.create_single_image(res) for res in results]
         image_count = len(char_images)
         
-        # 預先載入背景並確保是 RGBA，這樣可以獲取其原始尺寸
-        # 我們將創建一個以此背景為基礎的新圖像副本進行操作
-        final_bg_image = BACKGROUND.convert("RGBA").copy() # 使用 .copy() 避免修改原始 BACKGROUND 物件
-        bg_width, bg_height = final_bg_image.size # 背景的實際寬高 (1024x512)
+        final_bg_image = BACKGROUND.convert("RGBA").copy()
+        bg_width, bg_height = final_bg_image.size
 
-        if image_count > 1: # 對於十連抽等多次抽卡
+        if image_count > 1:
             cols = 5
             rows = math.ceil(image_count / cols)
-            img_width, img_height = 120, 140  # 每個小格子的預期顯示尺寸
+            img_width, img_height = 120, 140
             padding = 10
-
-            # 計算卡片網格本身的寬高
             grid_width = cols * img_width + padding * 2
             grid_height = rows * img_height + padding * 2
-
-            # 創建一個透明的畫布來繪製卡片網格
             card_grid_image = PIL.Image.new("RGBA", (grid_width, grid_height), (0, 0, 0, 0))
 
-            for i, img in enumerate(char_images): # img 是 160x160
-                # 計算 img 在 card_grid_image 上的位置 (使其在 120x140 的格子內居中顯示部分)
+            for i, img in enumerate(char_images):
                 x_on_grid = padding + (i % cols * img_width) + (img_width - 160) // 2
                 y_on_grid = padding + (i // cols * img_height) + (img_height - 160) // 2
                 card_grid_image.alpha_composite(img, (x_on_grid, y_on_grid))
             
-            # 計算卡片網格在最終背景上的居中位置
             grid_x_on_bg = (bg_width - grid_width) // 2
             grid_y_on_bg = (bg_height - grid_height) // 2
-            
-            # 將繪製好的卡片網格貼到背景圖的中央
             final_bg_image.alpha_composite(card_grid_image, (grid_x_on_bg, grid_y_on_bg))
 
-        elif image_count == 1 : # 對於單抽
-            single_card_image = char_images[0] # 這是 160x160 的卡片
-            card_width, card_height = single_card_image.size # 應該是 (160, 160)
-            
-            # 計算單張卡片在背景圖上的居中位置
+        elif image_count == 1:
+            single_card_image = char_images[0]
+            card_width, card_height = single_card_image.size
             card_x_on_bg = (bg_width - card_width) // 2
             card_y_on_bg = (bg_height - card_height) // 2
-            
-            # 將單張卡片貼到背景圖的中央
             final_bg_image.alpha_composite(single_card_image, (card_x_on_bg, card_y_on_bg))
             
-        # else: 如果 image_count == 0，final_bg_image 已經是背景圖了，無需額外操作
-
         final_bg_image.save("result.png")
 
     @app_commands.command(name="gacha", description="模擬抽卡")
@@ -331,6 +317,14 @@ class Gacha(commands.Cog):
         view = GachaView(cog=self, mode=mode.value)
         await interaction.response.send_message("請選擇您要進行招募的卡池：", view=view, ephemeral=True)
 
+    # --- 修改後的 gacha-history 指令 ---
+    @app_commands.command(name="gacha-history", description="查看您在特定卡池的招募記錄")
+    async def gacha_history(self, interaction: discord.Interaction):
+        view = GachaHistoryView(cog=self)
+        await interaction.response.send_message("請選擇您要查詢記錄的卡池：", view=view, ephemeral=True)
+    # --- 指令修改結束 ---
+
+# --- 用於抽卡的下拉選單和按鈕 ---
 class GachaDropdown(discord.ui.Select):
     def __init__(self, cog: Gacha, mode: str):
         self.cog = cog
@@ -361,12 +355,11 @@ class GachaDropdown(discord.ui.Select):
         super().__init__(placeholder="選擇卡池", options=options)
 
     def _get_banner_display_name(self, banner):
-        """根據卡池資訊生成顯示名稱"""
         if banner["gachaType"] == "NormalGacha":
             return "常駐招募"
         elif banner["rateups"]:
             pickup_names = [rateup["name"] for rateup in banner["rateups"]]
-            return " & ".join(pickup_names[:2])  # 最多顯示兩個pickup角色名
+            return " & ".join(pickup_names[:2])
         else:
             return "特殊招募"
 
@@ -382,34 +375,34 @@ class GachaDropdown(discord.ui.Select):
 
         if self.mode == "single":
             results = [self.cog.pull_logic(server_str, choice, False)]
-        else:  # ten
+        else:
             results = [self.cog.pull_logic(server_str, choice, i == 9) for i in range(10)]
         
         self.cog.generate_gacha_image(results)
         
-        # 生成embed
         banner_display_name = self._get_banner_display_name(
             (self.cog.banners_gl if server_str == "global" else self.cog.banners_jp)[choice]
         )
         
+        try:
+            gacha_db.record_pulls(interaction.user.id, server_str, banner_display_name, results)
+        except Exception as e:
+            print(f"寫入抽卡記錄時發生錯誤: {e}")
+            
         embed = discord.Embed(
             title=f"老師，這是您的招募結果！",
             description=f"**伺服器：** {'國際服' if server_str == 'global' else '日服'}\n**卡池：** {banner_display_name}",
             color=discord.Color.blue()
         )
         
-        
         try:
             file = discord.File("result.png", filename="result.png")
             embed.set_image(url="attachment://result.png")
             view = GachaView(cog=self.cog, mode=self.mode, server=server_str, choice=choice, is_button=True)
             await interaction.followup.send(content=interaction.user.mention, file=file, embed=embed, view=view)
-        except FileNotFoundError:
-            await interaction.followup.send(content=f"{interaction.user.mention} 抱歉，生成結果圖片時發生錯誤。", embed=embed)
         except Exception as e:
             print(f"傳送抽卡結果時發生錯誤: {e}")
             await interaction.followup.send(content=f"{interaction.user.mention} 抱歉，處理您的請求時發生了未預期的錯誤。", embed=embed)
-
 
 class GachaButton(discord.ui.Button):
     def __init__(self, cog: Gacha, mode: str, server: str, choice: int):
@@ -424,12 +417,10 @@ class GachaButton(discord.ui.Button):
         
         if self.mode == "single":
             results = [self.cog.pull_logic(self.server, self.choice, False)]
-        else:  # ten
+        else:
             results = [self.cog.pull_logic(self.server, self.choice, i == 9) for i in range(10)]
             
         self.cog.generate_gacha_image(results)
-
-        
 
         current_banner_list = self.cog.banners_gl if self.server == "global" else self.cog.banners_jp
         banner = current_banner_list[self.choice]
@@ -439,27 +430,25 @@ class GachaButton(discord.ui.Button):
             pickup_names = [rateup["name"] for rateup in banner["rateups"]]
             banner_display_name = " & ".join(pickup_names[:2])
 
+        try:
+            gacha_db.record_pulls(interaction.user.id, self.server, banner_display_name, results)
+        except Exception as e:
+            print(f"寫入抽卡記錄時發生錯誤: {e}")
+
         embed = discord.Embed(
             title=f"老師，這是您的招募結果！",
             description=f"**伺服器：** {'國際服' if self.server == 'global' else '日服'}\n**卡池：** {banner_display_name}",
             color=discord.Color.blue()
         )
         
-        
-
         try:
             file = discord.File("result.png", filename="result.png")
             embed.set_image(url="attachment://result.png")
             view = GachaView(cog=self.cog, mode=self.mode, server=self.server, choice=self.choice, is_button=True)
             await interaction.followup.send(content=interaction.user.mention, file=file, embed=embed, view=view)
-
-
-        except FileNotFoundError:
-            await interaction.followup.send(content=f"{interaction.user.mention} 抱歉，生成結果圖片時發生錯誤。", embed=embed)
         except Exception as e:
             print(f"傳送抽卡結果時發生錯誤: {e}")
             await interaction.followup.send(content=f"{interaction.user.mention} 抱歉，處理您的請求時發生了未預期的錯誤。", embed=embed)
-
 
 class GachaView(discord.ui.View):
     def __init__(self, cog: Gacha, mode: str, server: str = "global", choice: int = -1, is_button: bool = False):
@@ -470,7 +459,112 @@ class GachaView(discord.ui.View):
         else:
             self.add_item(GachaDropdown(self.cog, mode))
 
+# --- 新增：用於歷史紀錄的下拉選單 ---
+class GachaHistoryDropdown(discord.ui.Select):
+    def __init__(self, cog: Gacha):
+        self.cog = cog
+        
+        options = []
+        # 輔助函式，避免重複程式碼
+        def _get_banner_display_name(banner):
+            if banner["gachaType"] == "NormalGacha":
+                return "常駐招募"
+            elif banner["rateups"]:
+                pickup_names = [rateup["name"] for rateup in banner["rateups"]]
+                return " & ".join(pickup_names[:2])
+            else:
+                return "特殊招募"
+
+        # 國際服卡池
+        for banner in self.cog.banners_gl:
+            banner_name = _get_banner_display_name(banner)
+            options.append(discord.SelectOption(
+                label=f"國際服：{banner_name}",
+                value=f"global_{banner_name}",
+                description=banner["gachaType"]
+            ))
+
+        # 日服卡池
+        for banner in self.cog.banners_jp:
+            banner_name = _get_banner_display_name(banner)
+            options.append(discord.SelectOption(
+                label=f"日服：{banner_name}",
+                value=f"japan_{banner_name}",
+                description=banner["gachaType"]
+            ))
+
+        if not options:
+            options = [discord.SelectOption(label="暫無卡池", value="no_banner", disabled=True)]
+
+        super().__init__(placeholder="選擇要查詢的卡池", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "no_banner":
+            await interaction.response.edit_message(content="目前沒有可用的卡池資訊可供查詢。", view=None)
+            return
+
+        # 使用 split('_', 1) 確保只分割一次，避免卡池名稱中包含底線時出錯
+        server_str, banner_name = self.values[0].split('_', 1)
+        
+        user_history = gacha_db.get_user_history_for_banner(interaction.user.id, banner_name)
+
+        if not user_history:
+            await interaction.response.edit_message(
+                content=f"您在 **{banner_name}** 卡池還沒有任何招募記錄喔！",
+                view=None
+            )
+            return
+
+        total_pulls = len(user_history)
+        ssr_count = sum(1 for pull in user_history if pull['rarity'] == 'SSR')
+        sr_count = sum(1 for pull in user_history if pull['rarity'] == 'SR')
+        r_count = sum(1 for pull in user_history if pull['rarity'] == 'R')
+        ssr_rate = (ssr_count / total_pulls) * 100 if total_pulls > 0 else 0
+
+        embed = discord.Embed(
+            title=f"【{interaction.user.display_name}】的招募記錄",
+            description=f"**卡池:** {banner_name}\n此記錄會在卡池更新後自動重置。",
+            color=discord.Color.gold()
+        )
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        
+        stats_text = (
+            f"**總招募數**: {total_pulls} 次\n"
+            f"**SSR**: {ssr_count} 張 ({ssr_rate:.2f}%)\n"
+            f"**SR**: {sr_count} 張\n"
+            f"**R**: {r_count} 張"
+        )
+        embed.add_field(name="統計數據", value=stats_text, inline=False)
+
+        # 篩選出所有 SSR 記錄
+        ssr_pulls = [pull for pull in user_history if pull['rarity'] == 'SSR']
+        
+        if ssr_pulls:
+            history_text_lines = []
+            for pull in ssr_pulls:
+                # 取得時間並格式化為 YYYY-MM-DD HH:MM
+                pull_time_dt = datetime.datetime.fromisoformat(pull['pull_time'])
+                formatted_time = pull_time_dt.strftime('%m-%d %H:%M')
+                history_text_lines.append(f"✨ `[{formatted_time}]` **{pull['char_name']}**")
+            
+            history_text = "\n".join(history_text_lines)
+            embed.add_field(name="SSR 招募記錄", value=history_text, inline=False)
+        else:
+            embed.add_field(name="SSR 招募記錄", value="此卡池尚未招募到 SSR 角色", inline=False)
+
+        # 更新原始訊息，顯示 Embed 並移除 View
+        await interaction.response.edit_message(content=None, embed=embed, view=None)
+
+class GachaHistoryView(discord.ui.View):
+    def __init__(self, cog: Gacha):
+        super().__init__(timeout=300) 
+        self.add_item(GachaHistoryDropdown(cog))
+# --- 新增結束 ---
+
 
 async def setup(bot: commands.Bot):
+    # 需要在 setup 函式中加入 datetime 的 import
+    global datetime
+
     await bot.add_cog(Gacha(bot))
-    print("Improved Gacha cog has been loaded with enhanced pull logic.")
+    print("Improved Gacha cog has been loaded with enhanced pull logic and history command.")
