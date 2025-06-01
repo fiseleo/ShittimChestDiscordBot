@@ -3,66 +3,91 @@ import datetime
 from discord.ext import commands, tasks
 import pytz
 
-# 匯入我們最新的、統一的資料更新工具
-from .utils import get_gacha_data
+from .utils import get_gacha_data # 確保 get_gacha_data 有 is_database_data_sufficient 函式
 
-# 定義時區，方便日誌記錄
-TIMEZONE = pytz.timezone('Asia/Taipei')
+TAIPEI_TIMEZONE = pytz.timezone('Asia/Taipei')
+UTC_PLUS_9 = pytz.timezone('Etc/GMT-9')
 
 class UpdateTasks(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # 當 Cog 載入時，自動啟動背景迴圈任務
-        self.update_data_loop.start()
-
-    def cog_unload(self):
-        # 當 Cog 被卸載時，優雅地停止背景迴圈
-        self.update_data_loop.cancel()
-
-    @tasks.loop(hours=6)  # 設定迴圈間隔，例如每 6 小時執行一次
-    async def update_data_loop(self):
-        """主要的背景更新迴圈任務。"""
-        print(f"[{datetime.datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')}] 開始執行週期性資料更新...")
         
-        # 獲取當前的 asyncio 事件迴圈
+        update_times = [
+            datetime.time(hour=0, minute=0, tzinfo=UTC_PLUS_9),
+            datetime.time(hour=12, minute=0, tzinfo=UTC_PLUS_9),
+            datetime.time(hour=18, minute=0, tzinfo=UTC_PLUS_9),
+        ]
+        
+        self.update_data_loop.change_interval(time=update_times)
+        self.update_data_loop.start()
+        self.bot.loop.create_task(self.initial_update())
+
+    async def initial_update(self):
+        """Cog 啟動時，檢查資料庫並視情況執行的首次資料更新。"""
+        await self.bot.wait_until_ready()
+        log_time = datetime.datetime.now(TAIPEI_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
+        
         loop = asyncio.get_running_loop()
         
+        # --- 修改：檢查資料庫是否需要初始化資料 ---
         try:
-            # 這是修正的核心：
-            # 使用 run_in_executor 將同步的、耗時的 update 函式放到一個獨立的執行緒中執行。
-            # 'None' 表示使用預設的 ThreadPoolExecutor。
-            # 這樣主程式（機器人）就可以繼續運作，完全不會被卡住。
-            await loop.run_in_executor(
-                None, 
-                get_gacha_data.update  # 呼叫我們新的、統一的更新函式
-            )
-            
-            print(f"[{datetime.datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')}] 資料更新完成，正在重新載入相關 Cogs...")
+            needs_initial_update = not await loop.run_in_executor(None, get_gacha_data.is_database_data_sufficient)
+        except Exception as e:
+            print(f"[{log_time}] 檢查資料庫狀態時發生錯誤: {e}，將執行首次更新。")
+            needs_initial_update = True # 保守起見，出錯則執行更新
 
-            # 重新載入依賴這些新資料的 Cog，讓它們能讀取到最新內容
-            # 這裡可以根據需要新增更多要 reload 的 cog
+        if needs_initial_update:
+            print(f"[{log_time}] 資料庫資料不足或不存在，執行首次資料更新...")
+            try:
+                await loop.run_in_executor(None, get_gacha_data.update)
+                log_time_after_update = datetime.datetime.now(TAIPEI_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
+                print(f"[{log_time_after_update}] 首次資料更新完成，嘗試重新載入 gacha Cog...")
+                try:
+                    await self.bot.reload_extension('cogs.gacha')
+                    print("首次更新後成功重新載入 cogs.gacha")
+                except Exception as e:
+                    print(f"首次更新後重新載入 cogs.gacha 失敗: {e}")
+            except Exception as e:
+                print(f"首次資料更新時發生嚴重錯誤: {e}")
+        else:
+            print(f"[{log_time}] 資料庫已有足夠資料，跳過首次資料更新。")
+        
+        log_time_end = datetime.datetime.now(TAIPEI_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{log_time_end}] 首次資料更新檢查流程結束。")
+    # --- 修改結束 ---
+
+    def cog_unload(self):
+        self.update_data_loop.cancel()
+
+    @tasks.loop()
+    async def update_data_loop(self):
+        log_time = datetime.datetime.now(TAIPEI_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{log_time}] 開始執行排程資料更新...")
+        
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, get_gacha_data.update)
+            
+            log_time_after_update = datetime.datetime.now(TAIPEI_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
+            print(f"[{log_time_after_update}] 資料更新完成，正在重新載入相關 Cogs...")
+
             cogs_to_reload = ['cogs.gacha'] 
             for cog_name in cogs_to_reload:
                 try:
                     await self.bot.reload_extension(cog_name)
                     print(f"成功重新載入 {cog_name}")
-                except commands.ExtensionNotLoaded:
-                    await self.bot.load_extension(cog_name) # 如果尚未載入，則載入
-                    print(f"成功載入 {cog_name}")
                 except Exception as e:
                     print(f"重新載入 {cog_name} 失敗: {e}")
-
         except Exception as e:
             print(f"執行更新任務時發生嚴重錯誤: {e}")
 
-        print(f"[{datetime.datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')}] 週期性資料更新結束。")
+        log_time_end = datetime.datetime.now(TAIPEI_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{log_time_end}] 排程資料更新結束。")
 
     @update_data_loop.before_loop
     async def before_update_loop(self):
-        """在迴圈開始前執行的特殊函式，確保機器人已完全準備就緒。"""
         await self.bot.wait_until_ready()
-        print("機器人已就緒，背景更新任務即將開始。")
+        print("機器人已就緒，背景更新排程任務即將開始。")
 
 async def setup(bot: commands.Bot):
-    """Cog 的入口點，將這個 Cog 加入到機器人中。"""
     await bot.add_cog(UpdateTasks(bot))

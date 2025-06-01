@@ -328,7 +328,7 @@ class Gacha(commands.Cog):
     @app_commands.command(name="gacha-history", description="查看您在特定卡池的招募記錄")
     async def gacha_history(self, interaction: discord.Interaction):
         view = GachaHistoryView(cog=self)
-        await interaction.response.send_message("請選擇您要查詢記錄的卡池：", view=view, ephemeral=True)
+        await interaction.response.send_message("請選擇您要查詢記錄的卡池：", view=view)
     # --- 指令修改結束 ---
 
 # --- 用於抽卡的下拉選單和按鈕 ---
