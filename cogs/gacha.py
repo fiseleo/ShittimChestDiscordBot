@@ -18,11 +18,18 @@ try:
     STAR_1 = PIL.Image.open(ASSETS_DIR / "star.png")
     STAR_2 = PIL.Image.open(ASSETS_DIR / "two_star.png")
     STAR_3 = PIL.Image.open(ASSETS_DIR / "three_star.png")
-    MASK = PIL.Image.open(ASSETS_DIR / "mask.png")
-    BORDER = PIL.Image.open(ASSETS_DIR / "border.png")
-    BACKGROUND = PIL.Image.open(ASSETS_DIR / "BackGround.png")
+    BACKGROUND = PIL.Image.open(ASSETS_DIR / "BackGround.png") 
     PURPLE_GLOW = PIL.Image.open(ASSETS_DIR / "purple_glow.png")
     YELLOW_GLOW = PIL.Image.open(ASSETS_DIR / "yellow_glow.png")
+    BORDER = PIL.Image.open(ASSETS_DIR / "border.png")
+
+
+    # 縮小 MASK 圖標尺寸
+    original_mask = PIL.Image.open(ASSETS_DIR / "mask.png")
+    original_mask_width, original_mask_height = original_mask.size
+    new_mask_width = int(original_mask_width * 0.875)
+    new_mask_height = int(original_mask_height * 0.875)
+    MASK = original_mask.resize((new_mask_width, new_mask_height), PIL.Image.Resampling.LANCZOS)
     
     # 縮小 Pickup 圖標尺寸
     original_Pickup= PIL.Image.open(ASSETS_DIR / "Pickup.png")
@@ -226,12 +233,12 @@ class Gacha(commands.Cog):
             with PIL.Image.open(char_img_path) as char_pil_img:
                 char_pil_img = char_pil_img.convert("RGBA")
                 original_width, original_height = char_pil_img.size
-                new_width = int(original_width * 1)
-                new_height = int(original_height * 0.85)
+                new_width = int(original_width * 0.875)
+                new_height = int(original_height * 0.875)
                 char_pil_img = char_pil_img.resize((new_width, new_height), PIL.Image.Resampling.LANCZOS)
                 char_pil_img = PIL.ImageChops.multiply(char_pil_img, MASK)
 
-                base_char_image.alpha_composite(char_pil_img, (20, 20))
+                base_char_image.alpha_composite(char_pil_img, (30, 20))
         except FileNotFoundError:
             print(f"警告：找不到學生圖片 {result['id']}.png for {result['name']}")
         except Exception as e:
