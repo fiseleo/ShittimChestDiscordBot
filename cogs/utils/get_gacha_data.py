@@ -111,8 +111,12 @@ def update():
 
     initialize_database() # 這會清空 banner 表，建立其他不存在的表
 
-    api_urls = {"char_jp": "https://schaledb.com/data/jp/students.min.json", "char_tw": "https://schaledb.com/data/tw/students.min.json", "char_en": "https://schaledb.com/data/en/students.min.json", "banner_jp": "https://raw.githubusercontent.com/electricgoat/ba-data/refs/heads/jp/DB/ShopRecruitExcelTable.json", "banner_gl": "https://raw.githubusercontent.com/electricgoat/ba-data/refs/heads/global/Excel/ShopRecruitExcelTable.json"}
+    api_urls = {"char_jp": "https://schaledb.com/data/jp/students.min.json", 
+                "char_tw": "https://schaledb.com/data/tw/students.min.json", "char_en": "https://schaledb.com/data/en/students.min.json", 
+                "banner_jp": "https://raw.githubusercontent.com/electricgoat/ba-data/refs/heads/jp/DB/ShopRecruitExcelTable.json", 
+                "banner_gl": "https://raw.githubusercontent.com/electricgoat/ba-data/refs/heads/global/Excel/ShopRecruitExcelTable.json"}
     api_data = {}
+
     with ThreadPoolExecutor(max_workers=5) as executor:
         future_to_url = {executor.submit(fetch_url, url): key for key, url in api_urls.items()}
         for future in as_completed(future_to_url):
@@ -155,11 +159,28 @@ def update():
     con = sqlite3.connect(DB_PATH) # 重新連線
     cur = con.cursor()
 
-    if old_jp_banners != new_jp_banners_set or old_gl_banners != new_gl_banners_set:
-        print("偵測到卡池變更，正在清空抽卡記錄...")
-        cur.execute("DELETE FROM gacha_history")
+    history_cleared_jp = False
+    history_cleared_gl = False
+
+    #Fix for issue  清空抽卡記錄
+
+    if old_jp_banners != new_jp_banners_set:
+        print("偵測到日服卡池變更，正在清空日服伺服器的抽卡記錄...") 
+        cur.execute("DELETE FROM gacha_history WHERE server = ?", ('japan',)) #
+        history_cleared_jp = True
     else:
-        print("卡池未變更，將保留現有抽卡記錄。")
+        print("日服卡池沒有變更，抽卡記錄不需要清空。")
+
+    if old_gl_banners != new_gl_banners_set:
+        print("偵測到國際服卡池變更，正在清空國際服伺服器的抽卡記錄...") 
+        cur.execute("DELETE FROM gacha_history WHERE server = ?", ('global',))
+        history_cleared_gl = True
+    else:
+        print("國際服卡池沒有變更，抽卡記錄不需要清空。")
+
+    if not history_cleared_jp and not history_cleared_gl:
+        print("沒有偵測到卡池變更，抽卡記錄不需要清空。")
+    
 
     cur.executemany("INSERT OR REPLACE INTO students_list VALUES (?, ?, ?, ?, ?, ?, ?)", [tuple(s.values()) for s in students.values()])
     if new_jp_banners_list:

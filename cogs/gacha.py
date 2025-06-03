@@ -459,14 +459,14 @@ class GachaButton(discord.ui.Button):
 
 class GachaView(discord.ui.View):
     def __init__(self, cog: Gacha, mode: str, server: str = "global", choice: int = -1, is_button: bool = False):
-        super().__init__(timeout=300) 
+        super().__init__(timeout=None)
         self.cog = cog
         if is_button:
             self.add_item(GachaButton(self.cog, mode, server, choice))
         else:
             self.add_item(GachaDropdown(self.cog, mode))
 
-# --- 新增：用於歷史紀錄的下拉選單 ---
+
 class GachaHistoryDropdown(discord.ui.Select):
     def __init__(self, cog: Gacha):
         self.cog = cog
@@ -566,7 +566,7 @@ class GachaHistoryView(discord.ui.View):
     def __init__(self, cog: Gacha):
         super().__init__(timeout=300) 
         self.add_item(GachaHistoryDropdown(cog))
-# --- 新增結束 ---
+
 
 
 async def setup(bot: commands.Bot):
