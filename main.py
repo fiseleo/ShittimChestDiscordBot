@@ -59,4 +59,4 @@ async def on_ready():
             print(f'載入 Cog {extension} 失敗.')
             traceback.print_exc()
 
-bot.run(token_test)
+bot.run(token)
